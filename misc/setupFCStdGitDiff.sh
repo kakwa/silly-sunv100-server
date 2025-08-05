@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cd `dirname $0`
+cd `dirname $0/..`
 
 # Ensure you're in a Git repo
 if [ ! -d .git ]; then
