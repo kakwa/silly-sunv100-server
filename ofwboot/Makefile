@@ -74,7 +74,7 @@ CPPFLAGS+=	-DSOFTRAID
 .endif
 
 ${PROG}: ${OBJS} ${LIBSA} ${LIBZ}
-	${LD} -N -Ttext ${RELOC} -e ${ENTRY} -o ${PROG} -nopie -znorelro \
+	${LD} -N -Ttext ${RELOC} -e ${ENTRY} -o ${PROG} --no-pie -znorelro \
 	    ${OBJS} -L${LIBSADIR} ${LIBSA} \
 	    -L${LIBZDIR} ${LIBZ}
 
