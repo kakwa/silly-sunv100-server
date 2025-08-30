@@ -46,7 +46,7 @@
 #include <lib/libsa/ufs2.h>
 #include <lib/libsa/cd9660.h>
 #ifdef NETBOOT
-#include <lib/libsa/nfs.h>
+#include <lib/libsa/tftp.h>
 #endif
 
 #ifdef SOFTRAID
@@ -196,14 +196,7 @@ struct devsw devsw[1] = {
 int ndevs = sizeof devsw / sizeof devsw[0];
 
 #ifdef SPARC_BOOT_UFS
-static struct fs_ops file_system_ufs = {
-	ufs_open, ufs_close, ufs_read, ufs_write, ufs_seek,
-	ufs_stat, ufs_readdir, ufs_fchmod
-};
-static struct fs_ops file_system_ufs2 = {
-	ufs2_open, ufs2_close, ufs2_read, ufs2_write, ufs2_seek,
-	ufs2_stat, ufs2_readdir, ufs2_fchmod
-};
+#error Local UFS disabled in this minimal build
 #endif
 #ifdef SPARC_BOOT_HSFS
 static struct fs_ops file_system_cd9660 = {
@@ -212,9 +205,9 @@ static struct fs_ops file_system_cd9660 = {
 };
 #endif
 #ifdef NETBOOT
-static struct fs_ops file_system_nfs = {
-	nfs_open, nfs_close, nfs_read, nfs_write, nfs_seek,
-	nfs_stat, nfs_readdir
+static struct fs_ops file_system_tftp = {
+	tftp_open, tftp_close, tftp_read, tftp_write, tftp_seek,
+	tftp_stat, tftp_readdir
 };
 #endif
 
@@ -699,7 +692,7 @@ devopen(struct open_file *of, const char *name, char **file)
 		ofdev.type = OFDEV_NET;
 		of->f_dev = devsw;
 		of->f_devdata = &ofdev;
-		bcopy(&file_system_nfs, file_system, sizeof file_system[0]);
+		bcopy(&file_system_tftp, file_system, sizeof file_system[0]);
 		nfsys = 1;
 		if ((error = net_open(&ofdev)))
 			goto bad;

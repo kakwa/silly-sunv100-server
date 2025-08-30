@@ -37,7 +37,8 @@
 
 #include <netinet/in.h>
 
-#include <nfs/rpcv2.h>
+/* bootparams disabled in this build */
+/* #include "rpcv2.h" */
 
 #include "stand.h"
 #include "net.h"

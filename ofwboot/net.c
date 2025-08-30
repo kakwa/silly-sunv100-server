@@ -60,20 +60,38 @@
 #include <lib/libsa/stand.h>
 #include <lib/libsa/net.h>
 #include <lib/libsa/netif.h>
-#include <lib/libsa/bootparam.h>
 #include <lib/libsa/bootp.h>
-#include <lib/libsa/nfs.h>
+#include <lib/libsa/tftp.h>
 
 #include "ofdev.h"
 
-int net_mountroot_bootparams(void);
+extern struct in_addr servip;
+
 int net_mountroot_bootp(void);
-int net_mountroot(void);
 
 extern char	rootpath[FNAME_SIZE];
+struct in_addr servip;
 
 static	int netdev_sock = -1;
 static	int open_count;
+
+int
+net_mountroot(void)
+{
+	int error;
+
+#ifdef DEBUG
+	printf("net_mountroot\n");
+#endif
+
+	error = net_mountroot_bootp();
+	if (error != 0)
+		return (error);
+	/* prefer bootp-provided server ip, else fallback to rootip if set */
+	if (servip.s_addr == 0 && rootip.s_addr != 0)
+		servip = rootip;
+	return 0;
+}
 
 /*
  * Called by devopen after it sets f->f_dev to our devsw entry.
@@ -118,28 +136,7 @@ net_close(struct of_dev *op)
 		}
 }
 
-int
-net_mountroot_bootparams(void)
-{
-	/* Get our IP address.  (rarp.c) */
-	if (rarp_getipaddress(netdev_sock) == -1)
-		return (errno);
-
-	printf("Using BOOTPARAMS protocol: ");
-	printf("ip address: %s", inet_ntoa(myip));
-
-	/* Get our hostname, server IP address. */
-	if (bp_whoami(netdev_sock))
-		return (errno);
-
-	printf(", hostname: %s\n", hostname);
-
-	/* Get the root pathname. */
-	if (bp_getfile(netdev_sock, "root", &rootip, rootpath))
-		return (errno);
-
-	return (0);
-}
+/* BOOTPARAMS path removed */
 
 int
 net_mountroot_bootp(void)
@@ -163,35 +160,4 @@ net_mountroot_bootp(void)
 	return (0);
 }
 
-int
-net_mountroot(void)
-{
-	int error;
 
-#ifdef DEBUG
-	printf("net_mountroot\n");
-#endif
-
-	/*
-	 * Get info for NFS boot: our IP address, our hostname,
-	 * server IP address, and our root path on the server.
-	 * There are two ways to do this:  The old, Sun way,
-	 * and the more modern, BOOTP way. (RFC951, RFC1048)
-	 */
-
-	/* Historically, we've used BOOTPARAMS, so try that first */
-	error = net_mountroot_bootparams();
-	if (error != 0)
-		/* Next, try BOOTP */
-		error = net_mountroot_bootp();
-	if (error != 0)
-		return (error);
-
-	printf("root addr=%s path=%s\n", inet_ntoa(rootip), rootpath);
-
-	/* Get the NFS file handle (mount). */
-	if (nfs_mount(netdev_sock, rootip, rootpath) != 0)
-		return (errno);
-
-	return (0);
-}

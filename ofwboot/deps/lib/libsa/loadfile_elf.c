@@ -66,6 +66,7 @@
  */
 
 #include <lib/libsa/arc4.h>
+#include <stdint.h>
 
 int ELFNAME(exec)(int, Elf_Ehdr *, uint64_t *, int);
 
