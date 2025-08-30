@@ -70,7 +70,7 @@ CPPFLAGS+=	-DSOFTRAID
 .if !make(clean) && !make(cleandir) && !make(includes) && !make(libdep) && \
     !make(sadep) && !make(salibdir) && !make(obj)
 .BEGIN:
-	@([ -h machine ] || ln -s ${.CURDIR}/../../include machine)
+	@([ -h machine ] || ln -s ${.CURDIR}/deps/include machine)
 .endif
 
 ${PROG}: ${OBJS} ${LIBSA} ${LIBZ}
