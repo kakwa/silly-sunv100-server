@@ -109,10 +109,9 @@ rarp_getipaddress(int sock)
 
 	ap = &rbuf.data.arp;
 	bcopy(ap->arp_tpa, (char *)&myip, sizeof(myip));
-#if 0
 	/* XXX - Can NOT assume this is our root server! */
+    /* kakwa: but we do anyway */
 	bcopy(ap->arp_spa, (char *)&rootip, sizeof(rootip));
-#endif
 
 	/* Compute our "natural" netmask. */
 	if (IN_CLASSA(myip.s_addr))

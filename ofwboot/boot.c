@@ -71,7 +71,7 @@
 #include "openfirm.h"
 
 #ifdef BOOT_DEBUG
-uint32_t	boot_debug = 0
+uint32_t	boot_debug = 1
 		    /* | BOOT_D_OFDEV */
 		    /* | BOOT_D_OFNET */
 		;

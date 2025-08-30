@@ -42,8 +42,6 @@
  * At open time, this does:
  *
  * find interface	- netif_open()
- * BOOTP		- bootp()
- * RPC/mountd		- nfs_mount()
  *
  * The root file handle from mountd is saved in a global
  * for use by the NFS open code (NFS/lookup).
@@ -60,14 +58,13 @@
 #include <lib/libsa/stand.h>
 #include <lib/libsa/net.h>
 #include <lib/libsa/netif.h>
-#include <lib/libsa/bootp.h>
 #include <lib/libsa/tftp.h>
 
 #include "ofdev.h"
 
 extern struct in_addr servip;
 
-int net_mountroot_bootp(void);
+int net_mountroot_rarp(void);
 
 extern char	rootpath[FNAME_SIZE];
 struct in_addr servip;
@@ -84,12 +81,12 @@ net_mountroot(void)
 	printf("net_mountroot\n");
 #endif
 
-	error = net_mountroot_bootp();
+	error = net_mountroot_rarp();
 	if (error != 0)
 		return (error);
-	/* prefer bootp-provided server ip, else fallback to rootip if set */
-	if (servip.s_addr == 0 && rootip.s_addr != 0)
-		servip = rootip;
+	if (rootip.s_addr != 0)
+	    servip = rootip;
+	    printf("TFTP IP address: %s\n", inet_ntoa(servip));
 	return 0;
 }
 
@@ -136,23 +133,23 @@ net_close(struct of_dev *op)
 		}
 }
 
-/* BOOTPARAMS path removed */
-
 int
-net_mountroot_bootp(void)
+net_mountroot_rarp(void)
 {
-	bootp(netdev_sock);
+	rarp_getipaddress(netdev_sock);
 
 	if (myip.s_addr == 0)
 		return(ENOENT);
 
-	printf("Using BOOTP protocol: ");
+	printf("Using RARP protocol: ");
 	printf("ip address: %s", inet_ntoa(myip));
 
 	if (hostname[0])
 		printf(", hostname: %s", hostname);
 	if (netmask)
 		printf(", netmask: %s", intoa(netmask));
+	if (rootip.s_addr)
+		printf(", server: %s", inet_ntoa(rootip));
 	if (gateip.s_addr)
 		printf(", gateway: %s", inet_ntoa(gateip));
 	printf("\n");
