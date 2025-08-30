@@ -39,7 +39,8 @@ CWARNFLAGS+=	-Wno-main
 AFLAGS+=	-x assembler-with-cpp -D_LOCORE -D__ELF__ -fno-pie 
 CFLAGS+=	${COPTS} -fno-pie -fno-stack-protector
 CPPFLAGS+=	-D_STANDALONE -DSUN4U -nostdinc
-#CPPFLAGS+=	-DNETIF_DEBUG 
+CPPFLAGS+=  -DNETBOOT
+CPPFLAGS+=	-DNETIF_DEBUG 
 
 BINMODE=	444
 
