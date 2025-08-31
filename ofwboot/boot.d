@@ -1,95 +1,98 @@
 boot.o: boot.c \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/lib/libsa/stand.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/param.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/null.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/inttypes.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/stdint.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/cdefs.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/stand.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/param.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/null.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/inttypes.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/stdint.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/cdefs.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/cdefs.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/cdefs.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/cdefs_elf.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/cdefs_elf.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/int_types.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/int_types.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/common_int_types.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/common_int_types.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/int_mwgwtypes.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/int_mwgwtypes.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/common_int_mwgwtypes.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/common_int_mwgwtypes.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/int_limits.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/int_limits.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/common_int_limits.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/common_int_limits.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/int_const.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/int_const.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/wchar_limits.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/wchar_limits.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/int_fmtio.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/int_fmtio.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/types.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/featuretest.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/types.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/featuretest.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/types.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/types.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/ansi.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/common_ansi.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/ansi.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/common_ansi.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/ansi.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/endian.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/endian.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/endian.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/endian_machdep.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/bswap.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/bswap.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/stdbool.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/fd_set.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/syslimits.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/bswap.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/stdbool.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/fd_set.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/syslimits.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/param.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/include/param.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/limits.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/limits.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/signal.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/sigtypes.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/siginfo.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/signal.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/sigtypes.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/siginfo.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/signal.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/signal.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/ucontext.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/ucontext.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/mcontext.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/mcontext.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/stat.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/time.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/timespec.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/stdarg.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/lib/libsa/saioctl.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/lib/libsa/saerrno.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/errno.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/lib/libsa/bootcfg.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/lib/libsa/loadfile.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/stat.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/time.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/timespec.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/stdarg.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/saioctl.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/saerrno.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/errno.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/bootcfg.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/loadfile.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/loadfile_machdep.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/exec_elf.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/exec_elf.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/elf_machdep.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/exec_aout.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/aout_mids.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/exec_aout.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/aout_mids.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/aout_machdep.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/aout_machdep.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/lib/libkern/libkern.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/stddef.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/container_of.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/lib/libkern/strlist.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/reboot.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/disklabel.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libkern/libkern.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/stddef.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/container_of.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libkern/strlist.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/reboot.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/disklabel.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/disklabel.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/disklabel.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/boot_flag.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/boot_flag.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/cpu.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/promlib.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/promlib.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/device.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/device_if.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/evcnt.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sys/queue.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/device.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/device_if.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/evcnt.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/queue.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/prop/proplib.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/idprom.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/idprom.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/dev/sun/idprom.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/dev/sun/../../include/idprom.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/bsd_openprom.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/bsd_openprom.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/openfirm.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/openfirm.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/dev/ofw/openfirm.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/bootinfo.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/bootinfo.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/stand/common/isfloppy.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sparc/stand/common/isfloppy.h \
  boot.h ofdev.h openfirm.h
