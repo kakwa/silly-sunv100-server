@@ -1,5 +1,4 @@
-/*	$OpenBSD: tftp.h,v 1.4 2014/11/19 19:59:02 miod Exp $	*/
-/*	$NetBSD: tftp.h,v 1.3 2003/08/07 16:32:30 agc Exp $	*/
+/*	$NetBSD: tftp.h,v 1.6 2005/12/11 12:24:46 christos Exp $	*/
 
 /*
  * Copyright (c) 1996
@@ -81,7 +80,6 @@ struct	tftphdr {
 		char	tu_stuff[1];	/* request packet stuff */
 	} th_u;
 	char	th_data[1];		/* data or error string */
-					/* [1] because space needed for NUL. */
 };
 
 #define	th_block	th_u.tu_block
@@ -101,14 +99,6 @@ struct	tftphdr {
 #define	EEXISTS		6		/* file already exists */
 #define	ENOUSER		7		/* no such user */
 
-/* FS_DEF(tftp); */
-
-int	tftp_open(char *, struct open_file *);
-int	tftp_close(struct open_file *);
-int	tftp_read(struct open_file *, void *, size_t, size_t *);
-int	tftp_write(struct open_file *, void *, size_t, size_t *);
-off_t	tftp_seek(struct open_file *, off_t, int);
-int	tftp_stat(struct open_file *, struct stat *);
-int	tftp_readdir(struct open_file *, char *);
+FS_DEF(tftp);
 
 #define IPPORT_TFTP 69

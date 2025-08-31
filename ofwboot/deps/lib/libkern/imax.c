@@ -1,5 +1,4 @@
-/*	$OpenBSD: imax.c,v 1.4 2004/08/07 00:38:32 deraadt Exp $	*/
-/*	$NetBSD: imax.c,v 1.3 1996/03/14 18:52:06 christos Exp $	*/
+/*	$NetBSD: imax.c,v 1.6 2009/03/14 21:04:24 dsl Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1991 Regents of the University of California.

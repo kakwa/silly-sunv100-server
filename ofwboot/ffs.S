@@ -1,1 +1,0 @@
-./deps/lib/libkern/arch/sparc64/ffs.S

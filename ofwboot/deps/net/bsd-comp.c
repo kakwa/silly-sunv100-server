@@ -1,5 +1,5 @@
-/*	$OpenBSD: bsd-comp.c,v 1.18 2025/07/07 02:28:50 jsg Exp $	*/
-/*	$NetBSD: bsd-comp.c,v 1.6 1996/10/13 02:10:58 christos Exp $	*/
+/*	$NetBSD: bsd-comp.c,v 1.23 2024/07/05 04:31:53 rin Exp $	*/
+/*	Id: bsd-comp.c,v 1.6 1996/08/28 06:31:58 paulus Exp 	*/
 
 /* Because this code is derived from the 4.3BSD compress source:
  *
@@ -40,10 +40,18 @@
  * This version is for use with mbufs on BSD-derived systems.
  */
 
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: bsd-comp.c,v 1.23 2024/07/05 04:31:53 rin Exp $");
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/mbuf.h>
+#include <sys/socket.h>
+#include <sys/module.h>
+#include <net/if.h>
+#include <net/if_types.h>
 #include <net/ppp_defs.h>
+#include <net/if_ppp.h>
 
 #define PACKETPTR	struct mbuf *
 #include <net/ppp-comp.h>
@@ -82,7 +90,7 @@ struct bsd_db {
     u_char  maxbits;
     u_char  debug;
     u_char  unit;
-    u_int16_t seqno;			/* sequence # of next packet */
+    uint16_t seqno;			/* sequence # of next packet */
     u_int   hdrlen;			/* header length to preallocate */
     u_int   mru;
     u_int   maxmaxcode;			/* largest valid code */
@@ -98,24 +106,24 @@ struct bsd_db {
     u_int   uncomp_bytes;		/* uncompressed bytes */
     u_int   comp_count;			/* compressed packets */
     u_int   comp_bytes;			/* compressed bytes */
-    u_int16_t *lens;			/* array of lengths of codes */
+    uint16_t *lens;			/* array of lengths of codes */
     struct bsd_dict {
 	union {				/* hash value */
-	    u_int32_t	fcode;
+	    uint32_t	fcode;
 	    struct {
 #if BYTE_ORDER == LITTLE_ENDIAN
-		u_int16_t prefix;	/* preceding code */
+		uint16_t prefix;	/* preceding code */
 		u_char	suffix;		/* last character of new code */
 		u_char	pad;
 #else
 		u_char	pad;
 		u_char	suffix;		/* last character of new code */
-		u_int16_t prefix;	/* preceding code */
+		uint16_t prefix;	/* preceding code */
 #endif
 	    } hs;
 	} f;
-	u_int16_t codem1;		/* output of hash table -1 */
-	u_int16_t cptr;			/* map code to hash table entry */
+	uint16_t codem1;		/* output of hash table -1 */
+	uint16_t cptr;			/* map code to hash table entry */
     } dict[1];
 };
 
@@ -126,35 +134,35 @@ static void	*bsd_comp_alloc(u_char *options, int opt_len);
 static void	*bsd_decomp_alloc(u_char *options, int opt_len);
 static void	bsd_free(void *state);
 static int	bsd_comp_init(void *state, u_char *options, int opt_len,
-				   int unit, int hdrlen, int debug);
+			      int unit, int hdrlen, int debug);
 static int	bsd_decomp_init(void *state, u_char *options, int opt_len,
-				     int unit, int hdrlen, int mru, int debug);
+				int unit, int hdrlen, int mru, int debug);
 static int	bsd_compress(void *state, struct mbuf **mret,
-				  struct mbuf *mp, int slen, int maxolen);
+			     struct mbuf *mp, int slen, int maxolen);
 static void	bsd_incomp(void *state, struct mbuf *dmsg);
 static int	bsd_decompress(void *state, struct mbuf *cmp,
-				    struct mbuf **dmpp);
+			       struct mbuf **dmpp);
 static void	bsd_reset(void *state);
 static void	bsd_comp_stats(void *state, struct compstat *stats);
 
 /*
  * Procedures exported to if_ppp.c.
  */
-struct compressor ppp_bsd_compress = {
-    CI_BSD_COMPRESS,		/* compress_proto */
-    bsd_comp_alloc,		/* comp_alloc */
-    bsd_free,			/* comp_free */
-    bsd_comp_init,		/* comp_init */
-    bsd_reset,			/* comp_reset */
-    bsd_compress,		/* compress */
-    bsd_comp_stats,		/* comp_stat */
-    bsd_decomp_alloc,		/* decomp_alloc */
-    bsd_free,			/* decomp_free */
-    bsd_decomp_init,		/* decomp_init */
-    bsd_reset,			/* decomp_reset */
-    bsd_decompress,		/* decompress */
-    bsd_incomp,			/* incomp */
-    bsd_comp_stats,		/* decomp_stat */
+static struct compressor ppp_bsd_compress = {
+    .compress_proto =	CI_BSD_COMPRESS,
+    .comp_alloc =	bsd_comp_alloc,
+    .comp_free =	bsd_free,
+    .comp_init =	bsd_comp_init,
+    .comp_reset =	bsd_reset,
+    .compress =		bsd_compress,
+    .comp_stat =	bsd_comp_stats,
+    .decomp_alloc =	bsd_decomp_alloc,
+    .decomp_free =	bsd_free,
+    .decomp_init =	bsd_decomp_init,
+    .decomp_reset =	bsd_reset,
+    .decompress =	bsd_decompress,
+    .incomp =		bsd_incomp,
+    .decomp_stat =	bsd_comp_stats,
 };
 
 /*
@@ -168,10 +176,10 @@ struct compressor ppp_bsd_compress = {
 #define MAXCODE(b)	((1 << (b)) - 1)
 #define BADCODEM1	MAXCODE(BSD_MAX_BITS)
 
-#define BSD_HASH(prefix,suffix,hshift)	((((u_int32_t)(suffix)) << (hshift)) \
-					 ^ (u_int32_t)(prefix))
-#define BSD_KEY(prefix,suffix)		((((u_int32_t)(suffix)) << 16) \
-					 + (u_int32_t)(prefix))
+#define BSD_HASH(prefix,suffix,hshift)	((((uint32_t)(suffix)) << (hshift)) \
+					 ^ (uint32_t)(prefix))
+#define BSD_KEY(prefix,suffix)		((((uint32_t)(suffix)) << 16) \
+					 + (uint32_t)(prefix))
 
 #define CHECK_GAP	10000		/* Ratio check interval */
 
@@ -179,10 +187,10 @@ struct compressor ppp_bsd_compress = {
 #define RATIO_SCALE	(1<<RATIO_SCALE_LOG)
 #define RATIO_MAX	(0x7fffffff>>RATIO_SCALE_LOG)
 
-static void bsd_clear(struct bsd_db *);
-static int bsd_check(struct bsd_db *);
-static void *bsd_alloc(u_char *, int, int);
-static int bsd_init(struct bsd_db *, u_char *, int, int, int, int,
+static void	bsd_clear(struct bsd_db *);
+static int	bsd_check(struct bsd_db *);
+static void	*bsd_alloc(u_char *, int, int);
+static int	bsd_init(struct bsd_db *, u_char *, int, int, int, int,
 			 int, int);
 
 /*
@@ -197,7 +205,6 @@ bsd_clear(struct bsd_db *db)
     db->ratio = 0;
     db->bytes_out = 0;
     db->in_count = 0;
-    db->incomp_count = 0;
     db->checkpoint = CHECK_GAP;
 }
 
@@ -341,10 +348,10 @@ bsd_alloc(u_char *options, int opt_len, int decomp)
     if (!decomp) {
 	db->lens = NULL;
     } else {
-	db->lens = mallocarray(maxmaxcode + 1, sizeof(db->lens[0]), M_DEVBUF,
-	    M_NOWAIT);
+	db->lens = malloc((maxmaxcode+1) * sizeof(db->lens[0]),
+	    M_DEVBUF, M_NOWAIT);
 	if (!db->lens) {
-	    free(db, M_DEVBUF, newlen);
+	    free(db, M_DEVBUF);
 	    return NULL;
 	}
     }
@@ -364,8 +371,8 @@ bsd_free(void *state)
     struct bsd_db *db = (struct bsd_db *) state;
 
     if (db->lens)
-	free(db->lens, M_DEVBUF, (db->maxmaxcode + 1) * sizeof(db->lens[0]));
-    free(db, M_DEVBUF, db->totlen);
+	free(db->lens, M_DEVBUF);
+    free(db, M_DEVBUF);
 }
 
 static void *
@@ -422,7 +429,7 @@ bsd_init(struct bsd_db *db, u_char *options, int opt_len, int unit, int hdrlen,
 
 static int
 bsd_comp_init(void *state, u_char *options, int opt_len, int unit, int hdrlen,
-    int debug)
+              int debug)
 {
     return bsd_init((struct bsd_db *) state, options, opt_len,
 		    unit, hdrlen, 0, debug, 0);
@@ -430,7 +437,7 @@ bsd_comp_init(void *state, u_char *options, int opt_len, int unit, int hdrlen,
 
 static int
 bsd_decomp_init(void *state, u_char *options, int opt_len, int unit, int hdrlen,
-    int mru, int debug)
+                int mru, int debug)
 {
     return bsd_init((struct bsd_db *) state, options, opt_len,
 		    unit, hdrlen, mru, debug, 1);
@@ -444,17 +451,16 @@ bsd_decomp_init(void *state, u_char *options, int opt_len, int unit, int hdrlen,
  */
 int					/* new slen */
 bsd_compress(void *state,
-    struct mbuf **mret,		/* return compressed mbuf chain here */
-    struct mbuf *mp,		/* from here */
-    int slen,			/* uncompressed length */
-    int maxolen)		/* max compressed length */
+             struct mbuf **mret /* return compressed mbuf chain here */,
+	     struct mbuf *mp /* from here */,
+	     int slen, int maxolen)
 {
     struct bsd_db *db = (struct bsd_db *) state;
     int hshift = db->hshift;
     u_int max_ent = db->max_ent;
     u_int n_bits = db->n_bits;
     u_int bitno = 32;
-    u_int32_t accm = 0, fcode;
+    uint32_t accm = 0, fcode;
     struct bsd_dict *dictp;
     u_char c;
     int hval, disp, ent, ilen;
@@ -476,7 +482,7 @@ bsd_compress(void *state,
 		if (maxolen - olen > MLEN)		\
 		    MCLGET(m, M_DONTWAIT);		\
 		wptr = mtod(m, u_char *);		\
-		cp_end = wptr + m_trailingspace(m);	\
+		cp_end = wptr + M_TRAILINGSPACE(m);	\
 	    } else					\
 		wptr = NULL;				\
 	}						\
@@ -519,7 +525,7 @@ bsd_compress(void *state,
 	    MCLGET(m, M_DONTWAIT);
 	m->m_data += db->hdrlen;
 	wptr = mtod(m, u_char *);
-	cp_end = wptr + m_trailingspace(m);
+	cp_end = wptr + M_TRAILINGSPACE(m);
     } else
 	wptr = cp_end = NULL;
 
@@ -637,8 +643,8 @@ bsd_compress(void *state,
     ++db->uncomp_count;
     if (olen + PPP_HDRLEN + BSD_OVHD > maxolen) {
 	/* throw away the compressed stuff if it is longer than uncompressed */
-	m_freemp(mret);
-
+	m_freem(*mret);
+	*mret = NULL;
 	++db->incomp_count;
 	db->incomp_bytes += ilen;
     } else {
@@ -664,9 +670,9 @@ bsd_incomp(void *state, struct mbuf *dmsg)
     u_int max_ent = db->max_ent;
     u_int n_bits = db->n_bits;
     struct bsd_dict *dictp;
-    u_int32_t fcode;
+    uint32_t fcode;
     u_char c;
-    u_int32_t hval, disp;
+    uint32_t hval, disp;
     int slen, ilen;
     u_int bitno = 7;
     u_char *rptr;
@@ -682,7 +688,6 @@ bsd_incomp(void *state, struct mbuf *dmsg)
     if (ent < 0x21 || ent > 0xf9)
 	return;
 
-    db->incomp_count++;
     db->seqno++;
     ilen = 1;		/* count the protocol as 1 byte */
     rptr += PPP_HDRLEN;
@@ -790,7 +795,7 @@ bsd_decompress(void *state, struct mbuf *cmp, struct mbuf **dmpp)
 {
     struct bsd_db *db = (struct bsd_db *) state;
     u_int max_ent = db->max_ent;
-    u_int32_t accm = 0;
+    uint32_t accm = 0;
     u_int bitno = 32;		/* 1st valid bit in accm */
     u_int n_bits = db->n_bits;
     u_int tgtbitno = 32-n_bits;	/* bitno when we have a code */
@@ -849,7 +854,7 @@ bsd_decompress(void *state, struct mbuf *cmp, struct mbuf **dmpp)
     MCLGET(dmp, M_DONTWAIT);
     dmp->m_data += db->hdrlen;
     wptr = mtod(dmp, u_char *);
-    space = m_trailingspace(dmp) - PPP_HDRLEN + 1;
+    space = M_TRAILINGSPACE(dmp) - PPP_HDRLEN + 1;
 
     /*
      * Fill in the ppp header, but not the last byte of the protocol
@@ -961,7 +966,7 @@ bsd_decompress(void *state, struct mbuf *cmp, struct mbuf **dmpp)
 	    m->m_next = NULL;
 	    dmp->m_next = m;
 	    MCLGET(m, M_DONTWAIT);
-	    space = m_trailingspace(m) - (codelen + extra);
+	    space = M_TRAILINGSPACE(m) - (codelen + extra);
 	    if (space < 0) {
 		/* now that's what I call *compression*. */
 		m_freem(mret);
@@ -1004,8 +1009,8 @@ bsd_decompress(void *state, struct mbuf *cmp, struct mbuf **dmpp)
 	 */
 	if (oldcode != CLEAR && max_ent < db->maxmaxcode) {
 	    struct bsd_dict *dictp2;
-	    u_int32_t fcode;
-	    u_int32_t hval, disp;
+	    uint32_t fcode;
+	    uint32_t hval, disp;
 
 	    fcode = BSD_KEY(oldcode,finchar);
 	    hval = BSD_HASH(oldcode,finchar,db->hshift);
@@ -1081,5 +1086,25 @@ bsd_decompress(void *state, struct mbuf *cmp, struct mbuf **dmpp)
     m_freem(mret);
     return DECOMP_FATALERROR;
 #endif /* DEBUG */
+}
+
+MODULE(MODULE_CLASS_MISC, ppp_bsdcomp, "if_ppp");
+
+static int
+ppp_bsdcomp_modcmd(modcmd_t cmd, void *arg)
+{
+
+	switch (cmd) {
+	case MODULE_CMD_INIT:
+		return ppp_register_compressor(&ppp_bsd_compress, 1);
+	case MODULE_CMD_FINI:
+		return ppp_unregister_compressor(&ppp_bsd_compress, 1);
+	case MODULE_CMD_STAT:
+		return 0;
+	default:
+		return ENOTTY;
+	}
+
+	return ENOTTY;
 }
 #endif /* DO_BSD_COMPRESS */

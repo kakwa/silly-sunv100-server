@@ -1,5 +1,4 @@
-/*	$OpenBSD: if_dl.h,v 1.13 2023/11/12 17:51:40 bluhm Exp $	*/
-/*	$NetBSD: if_dl.h,v 1.8 1995/03/26 20:30:13 jtc Exp $	*/
+/*	$NetBSD: if_dl.h,v 1.31 2022/11/07 08:32:35 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 1990, 1993
@@ -53,49 +52,79 @@
 #ifndef _NET_IF_DL_H_
 #define _NET_IF_DL_H_
 
+#include <sys/ansi.h>
+
+#ifndef sa_family_t
+typedef __sa_family_t	sa_family_t;
+#define sa_family_t	__sa_family_t
+#endif
+#ifndef socklen_t
+typedef __socklen_t   socklen_t;
+#define socklen_t     __socklen_t
+#endif
+
+struct dl_addr {
+	uint8_t	    dl_type;	/* interface type */
+	uint8_t	    dl_nlen;	/* interface name length, no trailing 0 reqd. */
+	uint8_t	    dl_alen;	/* link level address length */
+	uint8_t	    dl_slen;	/* link layer selector length */
+	char	    dl_data[24]; /*
+				  * minimum work area, can be larger; contains
+				  * both if name and ll address; big enough for
+				  * IFNAMSIZ plus 8byte ll addr.
+				  */
+};
+
 /*
  * Structure of a Link-Level sockaddr:
  */
 struct sockaddr_dl {
-	u_char	  sdl_len;	/* Total length of sockaddr */
-	u_char	  sdl_family;	/* AF_LINK */
-	u_int16_t sdl_index;	/* if != 0, system given index for interface */
-	u_char	  sdl_type;	/* interface type */
-	u_char	  sdl_nlen;	/* interface name length, no trailing 0 reqd. */
-	u_char	  sdl_alen;	/* link level address length */
-	u_char	  sdl_slen;	/* link layer selector length, mostly 0 */
-	char	  sdl_data[24];	/* minimum work area, can be larger;
-				   contains both if name and ll address;
-				   big enough for IFNAMSIZ plus 8byte ll addr */
+	uint8_t	    sdl_len;	/* Total length of sockaddr */
+	sa_family_t sdl_family;	/* AF_LINK */
+	uint16_t    sdl_index;	/* if != 0, system given index for interface */
+	struct dl_addr sdl_addr;
+#define sdl_type	sdl_addr.dl_type
+#define sdl_nlen	sdl_addr.dl_nlen
+#define sdl_alen	sdl_addr.dl_alen
+#define sdl_slen	sdl_addr.dl_slen
+#define sdl_data	sdl_addr.dl_data
 };
 
-#define LLADDR(s) ((caddr_t)((s)->sdl_data + (s)->sdl_nlen))
+#define	satosdl(__sa)	((struct sockaddr_dl *)(__sa))
+#define	satocsdl(__sa)	((const struct sockaddr_dl *)(__sa))
+
+/* We do arithmetic directly with these, so keep them char instead of void */
+#define LLADDR(s) ((char *)((s)->sdl_data + (s)->sdl_nlen))
+#define CLLADDR(s) ((const char *)((s)->sdl_data + (s)->sdl_nlen))
 
 #ifdef _KERNEL
+uint8_t sockaddr_dl_measure(uint8_t, uint8_t);
+struct sockaddr *sockaddr_dl_alloc(uint16_t, uint8_t,
+    const void *, uint8_t, const void *, uint8_t, int);
+struct sockaddr_dl *sockaddr_dl_init(struct sockaddr_dl *, socklen_t, uint16_t,
+    uint8_t, const void *, uint8_t, const void *, uint8_t);
+struct sockaddr_dl *sockaddr_dl_setaddr(struct sockaddr_dl *, socklen_t,
+    const void *, uint8_t);
+#else
 
-static inline struct sockaddr_dl *
-satosdl(struct sockaddr *sa)
-{
-	return ((struct sockaddr_dl *)(sa));
-}
-
-static inline const struct sockaddr_dl *
-satosdl_const(const struct sockaddr *sa)
-{
-	return ((const struct sockaddr_dl *)(sa));
-}
-
-static inline struct sockaddr *
-sdltosa(struct sockaddr_dl *sdl)
-{
-	return ((struct sockaddr *)(sdl));
-}
-
-#else /* _KERNEL */
+#include <sys/cdefs.h>
 
 __BEGIN_DECLS
+void	link_addr(const char *, struct sockaddr_dl *);
 char	*link_ntoa(const struct sockaddr_dl *);
 __END_DECLS
 
-#endif /* _KERNEL */
-#endif /* _NET_IF_DL_H_ */
+#endif /* !_KERNEL */
+
+#if defined(_KERNEL) || defined(_TEST)
+// 255 xx: + 255 'a' + / + # + 3 digits + NUL
+#define LINK_ADDRSTRLEN	((255 * 4) + 5)
+#define LLA_ADDRSTRLEN	(16 * 3)
+
+char	*lla_snprintf(char *, size_t, const void *, size_t);
+int	dl_print(char *, size_t, const struct dl_addr *);
+#define DL_PRINT(b, a) (dl_print((b), sizeof(b), (a)), (b))
+int	sdl_print(char *, size_t, const void *);
+#endif
+
+#endif /* !_NET_IF_DL_H_ */

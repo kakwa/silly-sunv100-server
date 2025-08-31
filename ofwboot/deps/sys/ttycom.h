@@ -1,5 +1,4 @@
-/*	$OpenBSD: ttycom.h,v 1.17 2018/06/16 13:55:03 deraadt Exp $	*/
-/*	$NetBSD: ttycom.h,v 1.4 1996/05/19 17:17:53 jonathan Exp $	*/
+/*	$NetBSD: ttycom.h,v 1.23 2024/10/30 15:56:12 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 1982, 1986, 1990, 1993, 1994
@@ -37,12 +36,16 @@
  *	@(#)ttycom.h	8.1 (Berkeley) 3/28/94
  */
 
-#ifndef	_SYS_TTYCOM_H_
-#define	_SYS_TTYCOM_H_
+#ifndef	_POSIX_SYS_TTYCOM_H_
+#define	_POSIX_SYS_TTYCOM_H_
 
+#include <sys/syslimits.h>
 #include <sys/ioccom.h>
 
-/* Tty ioctl's. */
+/*
+ * Tty ioctl's except for those supported only for backwards compatibility
+ * with the old tty driver.
+ */
 
 /*
  * Window/terminal size structure.  This information is stored by the kernel
@@ -54,11 +57,34 @@ struct winsize {
 	unsigned short	ws_xpixel;	/* horizontal size, pixels */
 	unsigned short	ws_ypixel;	/* vertical size, pixels */
 };
+#endif /* !_POSIX_SYS_TTYCOM_H_ */
 
-struct tstamps {
-	int	ts_set;		/* TIOCM_CAR and/or TIOCM_CTS */
-	int	ts_clr;
+#include <sys/featuretest.h>
+
+/*
+ * XXX This is revolting -- should not depend on order of includes via
+ * _SYS_IOCTL_H_.
+ */
+#if defined(_NETBSD_SOURCE) || defined(_SYS_IOCTL_H_)
+
+#ifndef	_NETBSD_SYS_TTYCOM_H_
+#define	_NETBSD_SYS_TTYCOM_H_
+
+/*
+ * The following are not exposed when imported via <termios.h>
+ * when _POSIX_SOURCE (et.al.) is defined (and hence _NETBSD_SOURCE
+ * is not, unless that is added manually.)
+ */
+
+/* ptmget, for /dev/ptm pty getting ioctl TIOCPTMGET, and for TIOCPTSNAME */
+struct ptmget {
+	int	cfd;
+	int	sfd;
+	char	cn[PATH_MAX];
+	char	sn[PATH_MAX];
 };
+
+#define _PATH_PTMDEV	"/dev/ptm"
 
 #define		TIOCM_LE	0001		/* line enable */
 #define		TIOCM_DTR	0002		/* data terminal ready */
@@ -81,11 +107,16 @@ struct tstamps {
 #define	TIOCSETA	_IOW('t', 20, struct termios) /* set termios struct */
 #define	TIOCSETAW	_IOW('t', 21, struct termios) /* drain output, set */
 #define	TIOCSETAF	_IOW('t', 22, struct termios) /* drn out, fls in, set */
-#define	TIOCGETD	_IOR('t', 26, int)	/* get line discipline */
-#define	TIOCSETD	_IOW('t', 27, int)	/* set line discipline */
-#define	TIOCSETVERAUTH	_IOW('t', 28, int)	/* set verified auth */
-#define	TIOCCLRVERAUTH	 _IO('t', 29)		/* clear verified auth */
-#define	TIOCCHKVERAUTH	 _IO('t', 30)		/* check verified auth */
+#define	TIOCGETD	_IOR('t', 26, int)	/* get line discipline (deprecated) */
+#define	TIOCSETD	_IOW('t', 27, int)	/* set line discipline (deprecated) */
+
+/*
+ * This is the maximum length of a line discipline's name.
+ */
+#define	TTLINEDNAMELEN	32
+typedef char linedn_t[TTLINEDNAMELEN];
+#define TIOCGLINED	_IOR('t', 66, linedn_t)	/* get line discipline (new) */
+#define TIOCSLINED	_IOW('t', 67, linedn_t)	/* set line discipline (new) */
 						/* 127-124 compat */
 #define	TIOCSBRK	 _IO('t', 123)		/* set break bit */
 #define	TIOCCBRK	 _IO('t', 122)		/* clear break bit */
@@ -95,6 +126,7 @@ struct tstamps {
 #define	TIOCSPGRP	_IOW('t', 118, int)	/* set pgrp of tty */
 						/* 117-116 compat */
 #define	TIOCOUTQ	_IOR('t', 115, int)	/* output queue size */
+#define	TIOCSTI		_IOW('t', 114, char)	/* simulate terminal input */
 #define	TIOCNOTTY	 _IO('t', 113)		/* void tty association */
 #define	TIOCPKT		_IOW('t', 112, int)	/* pty: set/clear packet mode */
 #define		TIOCPKT_DATA		0x00	/* data packet */
@@ -115,15 +147,13 @@ struct tstamps {
 #define	TIOCGWINSZ	_IOR('t', 104, struct winsize)	/* get window size */
 #define	TIOCSWINSZ	_IOW('t', 103, struct winsize)	/* set window size */
 #define	TIOCUCNTL	_IOW('t', 102, int)	/* pty: set/clr usr cntl mode */
+#define	TIOCSTAT	_IOW('t', 101, int)	/* generate status message */
 #define		UIOCCMD(n)	_IO('u', n)	/* usr cntl op "n" */
-#define		TIOCUCNTL_SBRK (TIOCSBRK & 0xff)/* set break bit, usr ctnl */
-#define		TIOCUCNTL_CBRK (TIOCCBRK & 0xff)/* clear break bit, usr ctnl */
-#define	TIOCSTAT	_IO('t', 101)		/* generate status message */
-#define	TIOCGSID	_IOR('t', 99, int)	/* get sid of tty */
+#define	TIOCGSID	_IOR('t', 99, int)	/* get session id */
 #define	TIOCCONS	_IOW('t', 98, int)	/* become virtual console */
 #define	TIOCSCTTY	 _IO('t', 97)		/* become controlling tty */
 #define	TIOCEXT		_IOW('t', 96, int)	/* pty: external processing */
-#define	TIOCSIG		_IOW('t', 95, int)	/* pty: generate signal */
+#define	TIOCSIG		 _IO('t', 95)		/* pty: generate signal */
 #define	TIOCDRAIN	 _IO('t', 94)		/* wait till output drained */
 #define	TIOCGFLAGS	_IOR('t', 93, int)	/* get device flags */
 #define	TIOCSFLAGS	_IOW('t', 92, int)	/* set device flags */
@@ -131,21 +161,23 @@ struct tstamps {
 #define		TIOCFLAG_CLOCAL		0x02	/* set clocal on open */
 #define		TIOCFLAG_CRTSCTS	0x04	/* set crtscts on open */
 #define		TIOCFLAG_MDMBUF		0x08	/* set mdmbuf on open */
-#define		TIOCFLAG_PPS		0x10	/* call hardpps on carrier up */
-#define	TIOCGTSTAMP	_IOR('t', 91, struct timeval)	/* get timestamp */
-#define	TIOCSTSTAMP	_IOW('t', 90, struct tstamps)	/* timestamp reasons */
+#define		TIOCFLAG_CDTRCTS	0x10	/* set cdtrcts on open */
+#define	TIOCDCDTIMESTAMP _IOR('t', 88, struct timeval) /* get timestamp of last
+						 * Cd rise, stamp next rise */
 
-/* Backwards compatibility */
-#define	TIOCMODG	TIOCMGET
-#define	TIOCMODS	TIOCMSET
+#define TIOCPTMGET 	 _IOR('t', 70, struct ptmget)	/* get ptys */
+#define TIOCGRANTPT 	 _IO('t', 71) 			/* grantpt(3) */
+#define TIOCPTSNAME 	 _IOR('t', 72, struct ptmget)	/* ptsname(3) */
+
+#define TIOCSQSIZE	 _IOW('t', 128, int)	/* set queue size */
+#define TIOCGQSIZE	 _IOR('t', 129, int)	/* get queue size */
 
 #define	TTYDISC		0		/* termios tty line discipline */
 #define	TABLDISC	3		/* tablet discipline */
 #define	SLIPDISC	4		/* serial IP discipline */
 #define	PPPDISC		5		/* ppp discipline */
 #define	STRIPDISC	6		/* metricom wireless IP discipline */
-#define	NMEADISC	7		/* NMEA0183 discipline */
-#define	MSTSDISC	8		/* Meinberg time string discipline */
-#define	ENDRUNDISC	9		/* EndRun time format discipline */
+#define	HDLCDISC	9		/* HDLC discipline */
 
-#endif /* !_SYS_TTYCOM_H_ */
+#endif /* !_NETBSD_SYS_TTYCOM_H_ */
+#endif /* _NETBSD_SOURCE || _IOCTL_H */

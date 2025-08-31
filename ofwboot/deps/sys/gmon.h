@@ -1,5 +1,4 @@
-/*	$OpenBSD: gmon.h,v 1.12 2025/07/16 16:22:58 deraadt Exp $	*/
-/*	$NetBSD: gmon.h,v 1.5 1996/04/09 20:55:30 cgd Exp $	*/
+/*	$NetBSD: gmon.h,v 1.11 2021/08/14 17:51:20 ryo Exp $	*/
 
 /*-
  * Copyright (c) 1982, 1986, 1992, 1993
@@ -35,7 +34,6 @@
 #ifndef _SYS_GMON_H_
 #define _SYS_GMON_H_
 
-#include <sys/queue.h>
 #include <machine/profile.h>
 
 /*
@@ -47,8 +45,7 @@ struct gmonhdr {
 	int	ncnt;		/* size of sample buffer (plus this header) */
 	int	version;	/* version number */
 	int	profrate;	/* profiling clock rate */
-	int	totarc;		/* space used by arcs */
-	int	spare[2];	/* reserved */
+	int	spare[3];	/* reserved */
 };
 #define GMONVERSION	0x00051879
 
@@ -60,7 +57,9 @@ struct gmonhdr {
 /*
  * fraction of text space to allocate for histogram counters here, 1/2
  */
+#ifndef HISTFRACTION
 #define	HISTFRACTION	2
+#endif	/* HISTFRACTION */
 
 /*
  * Fraction of text space to allocate for from hash buckets.
@@ -97,7 +96,7 @@ struct gmonhdr {
  */
 #define ARCDENSITY	2
 #define MINARCS		50
-#define MAXARCS		((1 << (8 * sizeof(HISTCOUNTER))) - 2)
+#define MAXARCS		((1 << (unsigned int)(8 * sizeof(HISTCOUNTER))) - 2)
 
 struct tostruct {
 	u_long	selfpc;
@@ -117,12 +116,6 @@ struct rawarc {
 };
 
 /*
- * general rounding functions.
- */
-#define ROUNDDOWN(x,y)	(((x)/(y))*(y))
-#define ROUNDUP(x,y)	((((x)+(y)-1)/(y))*(y))
-
-/*
  * The profiling data structures are housed in this structure.
  */
 struct gmonparam {
@@ -138,12 +131,8 @@ struct gmonparam {
 	u_long		highpc;
 	u_long		textsize;
 	u_long		hashfraction;
-	void		*outbuf;
-	size_t		outbuflen;
-	void		*rawarcs;
-	int		dirfd;
-	SLIST_ENTRY(gmonparam)	list;
 };
+extern struct gmonparam _gmonparam;
 
 /*
  * Possible states of profiling.
@@ -161,22 +150,5 @@ struct gmonparam {
 #define	GPROF_FROMS	2	/* struct: from location hash bucket */
 #define	GPROF_TOS	3	/* struct: destination/count structure */
 #define	GPROF_GMONPARAM	4	/* struct: profiling parameters (see above) */
-
-#ifdef _KERNEL
-extern int gmoninit;		/* Is the kernel ready for being profiled? */
-
-#else /* !_KERNEL */
-
-#include <sys/cdefs.h>
-
-__BEGIN_DECLS
-extern struct gmonparam _gmonparam;
-void	_mcleanup(void);
-void	_monstartup(u_long, u_long);
-void	moncontrol(int);
-struct gmonparam *_gmon_alloc(void);
-__END_DECLS
-
-#endif /* !_KERNEL */
-
+#define	GPROF_PERCPU	5	/* per cpu node */
 #endif /* !_SYS_GMON_H_ */

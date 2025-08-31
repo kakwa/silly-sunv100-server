@@ -1,9 +1,11 @@
-/*	$OpenBSD: core.h,v 1.9 2024/01/17 22:22:25 kurt Exp $	*/
-/*	$NetBSD: core.h,v 1.4 1994/10/29 08:20:14 cgd Exp $	*/
+/*	$NetBSD: core.h,v 1.12 2009/08/20 22:07:49 he Exp $	*/
 
-/*
- * Copyright (c) 1994 Paul Kranenburg
+/*-
+ * Copyright (c) 1998 The NetBSD Foundation, Inc.
  * All rights reserved.
+ *
+ * This code is derived from software contributed to The NetBSD Foundation
+ * by Paul Kranenburg.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -13,23 +15,22 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *      This product includes software developed by Paul Kranenburg.
- * 4. The name of the author may not be used to endorse or promote products
- *    derived from this software without specific prior written permission
  *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
- * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
- * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
- * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  */
+
+#ifndef _SYS_CORE_H_
+#define _SYS_CORE_H_
 
 #define COREMAGIC	0507
 #define CORESEGMAGIC	0510
@@ -56,13 +57,9 @@
 #define CORE_DATA	2
 #define CORE_STACK	4
 
-#ifndef _KERNEL
+#include <sys/aout_mids.h>
+
 /*
- * XXX OBSOLETE, NO LONGER USED
- * XXX This header file exists to support binutils' netbsd-core format
- * XXX which is still needed for the a.out-m88k-openbsd use in luna88k
- * XXX boot block creation.
- *
  * A core file consists of a header followed by a number of segments.
  * Each segment is preceded by a `coreseg' structure giving the
  * segment's type, the virtual address where the bits resided in
@@ -74,12 +71,12 @@
  */
 
 struct core {
-	u_int32_t c_midmag;		/* magic, id, flags */
-	u_int16_t c_hdrsize;		/* Size of this header (machdep algn) */
-	u_int16_t c_seghdrsize;		/* Size of a segment header */
-	u_int32_t c_nseg;		/* # of core segments */
-	char	c_name[_MAXCOMLEN];	/* Copy of p->p_comm, incl NUL */
-	u_int32_t c_signo;		/* Killing signal */
+	uint32_t c_midmag;		/* magic, id, flags */
+	uint16_t c_hdrsize;		/* Size of this header (machdep algn) */
+	uint16_t c_seghdrsize;		/* Size of a segment header */
+	uint32_t c_nseg;		/* # of core segments */
+	char	c_name[MAXCOMLEN+1];	/* Copy of p->p_comm */
+	uint32_t c_signo;		/* Killing signal */
 	u_long	c_ucode;		/* Hmm ? */
 	u_long	c_cpusize;		/* Size of machine dependent segment */
 	u_long	c_tsize;		/* Size of traditional text segment */
@@ -88,12 +85,32 @@ struct core {
 };
 
 struct coreseg {
-	u_int32_t c_midmag;		/* magic, id, flags */
+	uint32_t c_midmag;		/* magic, id, flags */
 	u_long	c_addr;			/* Virtual address of segment */
 	u_long	c_size;			/* Size of this segment */
 };
 
-#else
-int	coredump_write(void *, enum uio_seg, const void *, size_t, int);
-void	coredump_unmap(void *, vaddr_t, vaddr_t);
-#endif
+/*
+ * 32-bit versions of the above.
+ */
+struct core32 {
+	uint32_t c_midmag;		/* magic, id, flags */
+	uint16_t c_hdrsize;		/* Size of this header (machdep algn) */
+	uint16_t c_seghdrsize;		/* Size of a segment header */
+	uint32_t c_nseg;		/* # of core segments */
+	char	c_name[MAXCOMLEN+1];	/* Copy of p->p_comm */
+	uint32_t c_signo;		/* Killing signal */
+	u_int	c_ucode;		/* Hmm ? */
+	u_int	c_cpusize;		/* Size of machine dependent segment */
+	u_int	c_tsize;		/* Size of traditional text segment */
+	u_int	c_dsize;		/* Size of traditional data segment */
+	u_int	c_ssize;		/* Size of traditional stack segment */
+};
+
+struct coreseg32 {
+	uint32_t c_midmag;		/* magic, id, flags */
+	u_int	c_addr;			/* Virtual address of segment */
+	u_int	c_size;			/* Size of this segment */
+};
+
+#endif /* !_SYS_CORE_H_ */

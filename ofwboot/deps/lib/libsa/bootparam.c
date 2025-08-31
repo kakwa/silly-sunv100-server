@@ -1,5 +1,4 @@
-/*	$OpenBSD: bootparam.c,v 1.13 2023/01/04 09:24:14 jsg Exp $	*/
-/*	$NetBSD: bootparam.c,v 1.10 1996/10/14 21:16:55 thorpej Exp $	*/
+/*	$NetBSD: bootparam.c,v 1.21 2019/04/02 22:25:10 christos Exp $	*/
 
 /*
  * Copyright (c) 1995 Gordon W. Ross
@@ -36,24 +35,33 @@
 #include <net/if.h>
 
 #include <netinet/in.h>
+#include <netinet/in_systm.h>
 
-/* bootparams disabled in this build */
-/* #include "rpcv2.h" */
+#ifdef _STANDALONE
+#include <lib/libkern/libkern.h>
+#else
+#include <string.h>
+#endif
+
+#include "rpcv2.h"
 
 #include "stand.h"
 #include "net.h"
-#include "netif.h"
 #include "rpc.h"
 #include "bootparam.h"
 
 #ifdef DEBUG_RPC
 #define RPC_PRINTF(a)	printf a
 #else
-#define RPC_PRINTF(a)	/* printf a */
+#define RPC_PRINTF(a)
 #endif
 
 struct in_addr	bp_server_addr;	/* net order */
-u_int16_t	bp_server_port;	/* net order */
+n_short		bp_server_port;	/* net order */
+
+uint32_t	hostnamelen;
+char		domainname[FNAME_SIZE]; /* our DNS domain */
+uint32_t	domainnamelen;
 
 /*
  * RPC definitions for bootparamd
@@ -68,15 +76,15 @@ u_int16_t	bp_server_port;	/* net order */
  * (Note, really four ints, NOT chars.  Blech.)
  */
 struct xdr_inaddr {
-	u_int32_t  atype;
+	uint32_t  atype;
 	int32_t	addr[4];
 };
 
-int xdr_inaddr_encode(char **p, struct in_addr ia);
-int xdr_inaddr_decode(char **p, struct in_addr *ia);
+int xdr_inaddr_encode(char **, struct in_addr);
+int xdr_inaddr_decode(char **, struct in_addr *);
 
-int xdr_string_encode(char **p, char *str, int len);
-int xdr_string_decode(char **p, char *str, int *len_p);
+int xdr_string_encode(char **, char *, uint32_t);
+int xdr_string_decode(char **, char *, uint32_t *);
 
 
 /*
@@ -99,36 +107,37 @@ bp_whoami(int sockfd)
 {
 	/* RPC structures for PMAPPROC_CALLIT */
 	struct args {
-		u_int32_t prog;
-		u_int32_t vers;
-		u_int32_t proc;
-		u_int32_t arglen;
+		uint32_t prog;
+		uint32_t vers;
+		uint32_t proc;
+		uint32_t arglen;
 		struct xdr_inaddr xina;
 	} *args;
 	struct repl {
-		u_int16_t _pad;
-		u_int16_t port;
-		u_int32_t encap_len;
+		uint16_t _pad;
+		uint16_t port;
+		uint32_t encap_len;
 		/* encapsulated data here */
-		u_int32_t  capsule[64];
+		n_long  capsule[64];
 	} *repl;
 	struct {
-		u_int32_t	h[RPC_HEADER_WORDS];
+		n_long	h[RPC_HEADER_WORDS];
 		struct args d;
 	} sdata;
 	struct {
-		u_int32_t	h[RPC_HEADER_WORDS];
+		n_long	h[RPC_HEADER_WORDS];
 		struct repl d;
 	} rdata;
 	char *send_tail, *recv_head;
 	struct iodesc *d;
-	int len, x;
+	uint32_t x;
+	ssize_t len;
 
-	RPC_PRINTF(("bp_whoami: myip=%s\n", inet_ntoa(myip)));
+	RPC_PRINTF(("%s: myip=%s\n", __func__, inet_ntoa(myip)));
 
 	if (!(d = socktodesc(sockfd))) {
-		RPC_PRINTF(("bp_whoami: bad socket. %d\n", sockfd));
-		return (-1);
+		RPC_PRINTF(("%s: bad socket. %d\n", __func__, sockfd));
+		return -1;
 	}
 	args = &sdata.d;
 	repl = &rdata.d;
@@ -136,29 +145,30 @@ bp_whoami(int sockfd)
 	/*
 	 * Build request args for PMAPPROC_CALLIT.
 	 */
-	args->prog = htonl(BOOTPARAM_PROG);
-	args->vers = htonl(BOOTPARAM_VERS);
-	args->proc = htonl(BOOTPARAM_WHOAMI);
-	args->arglen = htonl(sizeof(struct xdr_inaddr));
+	args->prog = htonl((uint32_t)BOOTPARAM_PROG);
+	args->vers = htonl((uint32_t)BOOTPARAM_VERS);
+	args->proc = htonl((uint32_t)BOOTPARAM_WHOAMI);
+	args->arglen = htonl((uint32_t)sizeof(struct xdr_inaddr));
 	send_tail = (char *)&args->xina;
 
 	/*
 	 * append encapsulated data (client IP address)
 	 */
 	if (xdr_inaddr_encode(&send_tail, myip))
-		return (-1);
+		return -1;
 
 	/* RPC: portmap/callit */
-	d->myport = htons(--rpc_port);
+	--rpc_port;
+	d->myport = (uint16_t)htons((uint16_t)rpc_port);
 	d->destip.s_addr = INADDR_BROADCAST;	/* XXX: subnet bcast? */
 	/* rpc_call will set d->destport */
 
 	len = rpc_call(d, PMAPPROG, PMAPVERS, PMAPPROC_CALLIT,
-	    args, send_tail - (char *)args,
-	    repl, sizeof(*repl));
+				  args, (size_t)(send_tail - (char *)args),
+				  repl, sizeof(*repl));
 	if (len < 8) {
-		printf("bootparamd: 'whoami' call failed\n");
-		return (-1);
+		printf("%s: 'whoami' call failed\n", __func__);
+		return -1;
 	}
 
 	/* Save bootparam server address (from IP header). */
@@ -171,45 +181,47 @@ bp_whoami(int sockfd)
 	 */
 	bp_server_port = repl->port;
 
-	RPC_PRINTF(("bp_whoami: server at %s:%d\n",
-	    inet_ntoa(bp_server_addr), ntohs(bp_server_port)));
+	RPC_PRINTF(("%s: server at %s:%d\n", __func__,
+	    inet_ntoa(bp_server_addr), ntohs((uint16_t)bp_server_port)));
 
 	/* We have just done a portmap call, so cache the portnum. */
-	rpc_pmap_putcache(bp_server_addr, BOOTPARAM_PROG, BOOTPARAM_VERS,
-	    (int)ntohs(bp_server_port));
+	rpc_pmap_putcache(bp_server_addr,
+			  BOOTPARAM_PROG,
+			  BOOTPARAM_VERS,
+			  (int)ntohs((uint16_t)bp_server_port));
 
 	/*
 	 * Parse the encapsulated results from bootparam/whoami
 	 */
-	x = ntohl(repl->encap_len);
+	x = ntohl((uint32_t)repl->encap_len);
 	if (len < x) {
-		printf("bp_whoami: short reply, %d < %d\n", len, x);
-		return (-1);
+		printf("%s: short reply, %zd < %d\n", __func__, len, x);
+		return -1;
 	}
 	recv_head = (char *)repl->capsule;
 
 	/* client name */
 	hostnamelen = MAXHOSTNAMELEN-1;
 	if (xdr_string_decode(&recv_head, hostname, &hostnamelen)) {
-		RPC_PRINTF(("bp_whoami: bad hostname\n"));
-		return (-1);
+		RPC_PRINTF(("%s: bad hostname\n", __func__));
+		return -1;
 	}
 
 	/* domain name */
 	domainnamelen = MAXHOSTNAMELEN-1;
 	if (xdr_string_decode(&recv_head, domainname, &domainnamelen)) {
-		RPC_PRINTF(("bp_whoami: bad domainname\n"));
-		return (-1);
+		RPC_PRINTF(("%s: bad domainname\n", __func__));
+		return -1;
 	}
 
 	/* gateway address */
 	if (xdr_inaddr_decode(&recv_head, &gateip)) {
-		RPC_PRINTF(("bp_whoami: bad gateway\n"));
-		return (-1);
+		RPC_PRINTF(("%s: bad gateway\n", __func__));
+		return -1;
 	}
 
 	/* success */
-	return(0);
+	return 0;
 }
 
 
@@ -224,22 +236,23 @@ int
 bp_getfile(int sockfd, char *key, struct in_addr *serv_addr, char *pathname)
 {
 	struct {
-		u_int32_t	h[RPC_HEADER_WORDS];
-		u_int32_t  d[64];
+		n_long	h[RPC_HEADER_WORDS];
+		n_long  d[64];
 	} sdata;
 	struct {
-		u_int32_t	h[RPC_HEADER_WORDS];
-		u_int32_t  d[128];
+		n_long	h[RPC_HEADER_WORDS];
+		n_long  d[128];
 	} rdata;
 	char serv_name[FNAME_SIZE];
 	char *send_tail, *recv_head;
 	/* misc... */
 	struct iodesc *d;
-	int sn_len, path_len, rlen;
+	uint32_t sn_len, path_len;
+	ssize_t rlen;
 
 	if (!(d = socktodesc(sockfd))) {
-		RPC_PRINTF(("bp_getfile: bad socket. %d\n", sockfd));
-		return (-1);
+		RPC_PRINTF(("%s: bad socket. %d\n", __func__, sockfd));
+		return -1;
 	}
 
 	send_tail = (char *)sdata.d;
@@ -251,29 +264,30 @@ bp_getfile(int sockfd, char *key, struct in_addr *serv_addr, char *pathname)
 
 	/* client name (hostname) */
 	if (xdr_string_encode(&send_tail, hostname, hostnamelen)) {
-		RPC_PRINTF(("bp_getfile: bad client\n"));
-		return (-1);
+		RPC_PRINTF(("%s: bad client\n", __func__));
+		return -1;
 	}
 
 	/* key name (root or swap) */
-	if (xdr_string_encode(&send_tail, key, strlen(key))) {
-		RPC_PRINTF(("bp_getfile: bad key\n"));
-		return (-1);
+	if (xdr_string_encode(&send_tail, key, (uint32_t)strlen(key))) {
+		RPC_PRINTF(("%s: bad key\n", __func__));
+		return -1;
 	}
 
 	/* RPC: bootparam/getfile */
-	d->myport = htons(--rpc_port);
-	d->destip   = bp_server_addr;
+	--rpc_port;
+	d->myport = htons((uint16_t)rpc_port);
+	d->destip = bp_server_addr;
 	/* rpc_call will set d->destport */
 
 	rlen = rpc_call(d,
 		BOOTPARAM_PROG, BOOTPARAM_VERS, BOOTPARAM_GETFILE,
-		sdata.d, send_tail - (char *)sdata.d,
+		sdata.d, (size_t)(send_tail - (char *)sdata.d),
 		rdata.d, sizeof(rdata.d));
 	if (rlen < 4) {
-		RPC_PRINTF(("bp_getfile: short reply\n"));
+		RPC_PRINTF(("%s: short reply\n", __func__));
 		errno = EBADRPC;
-		return (-1);
+		return -1;
 	}
 	recv_head = (char *)rdata.d;
 
@@ -282,27 +296,27 @@ bp_getfile(int sockfd, char *key, struct in_addr *serv_addr, char *pathname)
 	 */
 
 	/* server name */
-	sn_len = FNAME_SIZE-1;
+	sn_len = FNAME_SIZE - 1;
 	if (xdr_string_decode(&recv_head, serv_name, &sn_len)) {
-		RPC_PRINTF(("bp_getfile: bad server name\n"));
-		return (-1);
+		RPC_PRINTF(("%s: bad server name\n", __func__));
+		return -1;
 	}
 
 	/* server IP address (mountd/NFS) */
 	if (xdr_inaddr_decode(&recv_head, serv_addr)) {
-		RPC_PRINTF(("bp_getfile: bad server addr\n"));
-		return (-1);
+		RPC_PRINTF(("%s: bad server addr\n", __func__));
+		return -1;
 	}
 
 	/* server pathname */
-	path_len = MAXPATHLEN-1;
+	path_len = MAXPATHLEN - 1;
 	if (xdr_string_decode(&recv_head, pathname, &path_len)) {
-		RPC_PRINTF(("bp_getfile: bad server path\n"));
-		return (-1);
+		RPC_PRINTF(("%s: bad server path\n", __func__));
+		return -1;
 	}
 
 	/* success */
-	return(0);
+	return 0;
 }
 
 
@@ -311,114 +325,119 @@ bp_getfile(int sockfd, char *key, struct in_addr *serv_addr, char *pathname)
  * (but with non-standard args...)
  */
 
+
 int
-xdr_string_encode(char **pkt, char *str, int len)
+xdr_string_encode(char **pkt, char *str, uint32_t len)
 {
-	u_int32_t *lenp;
+	uint32_t *lenp;
 	char *datap;
-	int padlen = (len + 3) & ~3;	/* padded length */
+	uint32_t padlen = (len + 3) & ~3U;	/* padded length */
 
 	/* The data will be int aligned. */
-	lenp = (u_int32_t*) *pkt;
+	lenp = (uint32_t *)*pkt;
 	*pkt += sizeof(*lenp);
 	*lenp = htonl(len);
 
 	datap = *pkt;
 	*pkt += padlen;
-	bcopy(str, datap, len);
+	(void)memcpy(datap, str, len);
 
-	return (0);
+	return 0;
 }
 
+/* len_p: bufsize - 1 */
 int
-xdr_string_decode(char **pkt, char *str, int *len_p)
+xdr_string_decode(char **pkt, char *str, uint32_t *len_p)
 {
-	u_int32_t *lenp;
+	uint32_t *lenp;
 	char *datap;
-	int slen;	/* string length */
-	int plen;	/* padded length */
+	uint32_t slen;	/* string length */
+	uint32_t plen;	/* padded length */
 
 	/* The data will be int aligned. */
-	lenp = (u_int32_t*) *pkt;
+	lenp = (uint32_t *)*pkt;
 	*pkt += sizeof(*lenp);
 	slen = ntohl(*lenp);
-	plen = (slen + 3) & ~3;
+	plen = (slen + 3) & ~3U;
 
 	if (slen > *len_p)
 		slen = *len_p;
 	datap = *pkt;
 	*pkt += plen;
-	bcopy(datap, str, slen);
+	(void)memcpy(str, datap, slen);
 
 	str[slen] = '\0';
 	*len_p = slen;
 
-	return (0);
+	return 0;
 }
 
+
+/* ia: network order */
 int
 xdr_inaddr_encode(char **pkt, struct in_addr ia)
 {
 	struct xdr_inaddr *xi;
 	u_char *cp;
-	int32_t *ip;
+	uint32_t *ip;
 	union {
-		u_int32_t l;	/* network order */
+		n_long l;	/* network order */
 		u_char c[4];
 	} uia;
 
 	/* The data will be int aligned. */
-	xi = (struct xdr_inaddr *) *pkt;
+	xi = (struct xdr_inaddr *)*pkt;
 	*pkt += sizeof(*xi);
 	xi->atype = htonl(1);
 	uia.l = ia.s_addr;
 	cp = uia.c;
-	ip = xi->addr;
+	ip = (uint32_t *)xi->addr;
 	/*
 	 * Note: the htonl() calls below DO NOT
 	 * imply that uia.l is in host order.
 	 * In fact this needs it in net order.
 	 */
-	*ip++ = htonl((unsigned int)*cp++);
-	*ip++ = htonl((unsigned int)*cp++);
-	*ip++ = htonl((unsigned int)*cp++);
-	*ip++ = htonl((unsigned int)*cp++);
+	*ip++ = htonl((uint32_t)*cp++);
+	*ip++ = htonl((uint32_t)*cp++);
+	*ip++ = htonl((uint32_t)*cp++);
+	*ip++ = htonl((uint32_t)*cp++);
 
-	return (0);
+	return 0;
 }
 
+/* ia: network order */
 int
 xdr_inaddr_decode(char **pkt, struct in_addr *ia)
 {
 	struct xdr_inaddr *xi;
 	u_char *cp;
-	int32_t *ip;
+	uint32_t *ip;
 	union {
-		u_int32_t l;	/* network order */
+		n_long l;	/* network order */
 		u_char c[4];
 	} uia;
 
 	/* The data will be int aligned. */
-	xi = (struct xdr_inaddr *) *pkt;
+	xi = (struct xdr_inaddr *)*pkt;
 	*pkt += sizeof(*xi);
-	if (xi->atype != htonl(1)) {
-		RPC_PRINTF(("xdr_inaddr_decode: bad addrtype=%d\n",
-		    ntohl(xi->atype)));
-		return(-1);
+	if (xi->atype != htonl((uint32_t)1)) {
+		RPC_PRINTF(("%s: bad addrtype=%d\n", __func__,
+		    ntohl((uint32_t)nxi->atype)));
+		return -1;
 	}
 
 	cp = uia.c;
-	ip = xi->addr;
+	ip = (uint32_t *)xi->addr;
 	/*
 	 * Note: the ntohl() calls below DO NOT
 	 * imply that uia.l is in host order.
 	 * In fact this needs it in net order.
 	 */
-	*cp++ = ntohl(*ip++);
-	*cp++ = ntohl(*ip++);
-	*cp++ = ntohl(*ip++);
-	*cp++ = ntohl(*ip++);
+	*cp++ = (u_char)ntohl(*ip++);
+	*cp++ = (u_char)ntohl(*ip++);
+	*cp++ = (u_char)ntohl(*ip++);
+	*cp++ = (u_char)ntohl(*ip++);
 	ia->s_addr = uia.l;
 
-	return (0);
+	return 0;
 }

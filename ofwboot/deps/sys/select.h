@@ -1,4 +1,4 @@
-/*	$OpenBSD: select.h,v 1.17 2016/09/12 19:41:20 guenther Exp $	*/
+/*	$NetBSD: select.h,v 1.39 2021/09/29 02:47:22 thorpej Exp $	*/
 
 /*-
  * Copyright (c) 1992, 1993
@@ -34,104 +34,45 @@
 #ifndef _SYS_SELECT_H_
 #define	_SYS_SELECT_H_
 
-#include <sys/types.h>
+#include <sys/cdefs.h>
+#include <sys/featuretest.h>
+#include <sys/fd_set.h>
 
-#ifndef _TIMEVAL_DECLARED
-#define _TIMEVAL_DECLARED
-struct timeval {
-	time_t		tv_sec;		/* seconds */
-	suseconds_t	tv_usec;	/* and microseconds */
-};
-#endif
+#ifdef _KERNEL
+#include <sys/selinfo.h>		/* for struct selinfo */
+#include <sys/signal.h>			/* for sigset_t */
 
-#ifndef _TIMESPEC_DECLARED
-#define _TIMESPEC_DECLARED
-struct timespec {
-	time_t	tv_sec;		/* seconds */
-	long	tv_nsec;	/* and nanoseconds */
-};
-#endif
+struct lwp;
+struct proc;
+struct timespec;
+struct cpu_info;
+struct socket;
+struct knote;
 
-/*
- * Select uses bit masks of file descriptors in longs.  These macros
- * manipulate such bit fields (the filesystem macros use chars).
- * FD_SETSIZE may be defined by the user, but the default here should
- * be enough for most uses.
- */
-#ifndef	FD_SETSIZE
-#define	FD_SETSIZE	1024
-#endif
+int	selcommon(register_t *, int, fd_set *, fd_set *, fd_set *,
+    struct timespec *, sigset_t *);
+void	selrecord(struct lwp *selector, struct selinfo *);
+void	selrecord_knote(struct selinfo *, struct knote *);
+bool	selremove_knote(struct selinfo *, struct knote *);
+void	selnotify(struct selinfo *, int, long);
+void	selsysinit(struct cpu_info *);
+void	selinit(struct selinfo *);
+void	seldestroy(struct selinfo *);
 
-/*
- * We don't want to pollute the namespace with select(2) internals.
- * Non-underscore versions are exposed later #if __BSD_VISIBLE
- */
-#define	__NBBY	8				/* number of bits in a byte */
-typedef uint32_t __fd_mask;
-#define __NFDBITS ((unsigned)(sizeof(__fd_mask) * __NBBY)) /* bits per mask */
-#define	__howmany(x, y)	(((x) + ((y) - 1)) / (y))
+#else /* _KERNEL */
 
-typedef	struct fd_set {
-	__fd_mask fds_bits[__howmany(FD_SETSIZE, __NFDBITS)];
-} fd_set;
+#include <sys/sigtypes.h>
+#include <time.h>
 
-static __inline void
-__fd_set(int fd, fd_set *p)
-{
-	p->fds_bits[fd / __NFDBITS] |= (1U << (fd % __NFDBITS));
-}
-#define FD_SET(n, p)	__fd_set((n), (p))
-
-static __inline void
-__fd_clr(int fd, fd_set *p)
-{
-	p->fds_bits[fd / __NFDBITS] &= ~(1U << (fd % __NFDBITS));
-}
-#define FD_CLR(n, p)	__fd_clr((n), (p))
-
-static __inline int
-__fd_isset(int fd, const fd_set *p)
-{
-	return (p->fds_bits[fd / __NFDBITS] & (1U << (fd % __NFDBITS)));
-}
-#define FD_ISSET(n, p)	__fd_isset((n), (p))
-
-#if __BSD_VISIBLE
-#define	FD_COPY(f, t)	(void)(*(t) = *(f))
-#endif
-#define	FD_ZERO(p) do {					\
-	fd_set *_p = (p);				\
-	__size_t _n = __howmany(FD_SETSIZE, __NFDBITS);	\
-							\
-	while (_n > 0)					\
-		_p->fds_bits[--_n] = 0;			\
-} while (0)
-
-#if __BSD_VISIBLE
-#define	NBBY	__NBBY
-#define fd_mask	__fd_mask
-#define NFDBITS	__NFDBITS
-#ifndef howmany
-#define howmany(x, y)	__howmany(x, y)
-#endif
-#endif /* __BSD_VISIBLE */
-
-#ifndef _KERNEL
-#ifndef _SIGSET_T_DEFINED_
-#define _SIGSET_T_DEFINED_
-typedef unsigned int sigset_t;
-#endif
-
-#ifndef _SELECT_DEFINED_
-#define _SELECT_DEFINED_
 __BEGIN_DECLS
-int	select(int, fd_set * __restrict, fd_set * __restrict,
-	    fd_set * __restrict, struct timeval * __restrict);
+#ifndef __LIBC12_SOURCE__
 int	pselect(int, fd_set * __restrict, fd_set * __restrict,
-	    fd_set * __restrict, const struct timespec * __restrict,
-	    const sigset_t * __restrict);
+    fd_set * __restrict, const struct timespec * __restrict,
+    const sigset_t * __restrict) __RENAME(__pselect50);
+int	select(int, fd_set * __restrict, fd_set * __restrict,
+    fd_set * __restrict, struct timeval * __restrict) __RENAME(__select50);
+#endif /* __LIBC12_SOURCE__ */
 __END_DECLS
-#endif
-#endif /* !_KERNEL */
+#endif /* _KERNEL */
 
 #endif /* !_SYS_SELECT_H_ */

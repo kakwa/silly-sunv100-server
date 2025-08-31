@@ -1,8 +1,8 @@
-/*	$OpenBSD: pool.h,v 1.81 2025/05/21 09:33:49 mvs Exp $	*/
-/*	$NetBSD: pool.h,v 1.27 2001/06/06 22:00:17 rafal Exp $	*/
+/*	$NetBSD: pool.h,v 1.96 2021/12/22 16:57:28 thorpej Exp $	*/
 
 /*-
- * Copyright (c) 1997, 1998, 1999, 2000 The NetBSD Foundation, Inc.
+ * Copyright (c) 1997, 1998, 1999, 2000, 2007, 2020
+ *     The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
@@ -34,126 +34,86 @@
 #ifndef _SYS_POOL_H_
 #define _SYS_POOL_H_
 
-/*
- * sysctls.
- * kern.pool.npools
- * kern.pool.name.<number>
- * kern.pool.pool.<number>
- */
-#define KERN_POOL_NPOOLS	1
-#define KERN_POOL_NAME		2
-#define KERN_POOL_POOL		3
-#define KERN_POOL_CACHE		4	/* global pool cache info */
-#define KERN_POOL_CACHE_CPUS	5	/* all cpus cache info */
+#include <sys/stdbool.h>
+#include <sys/stdint.h>
 
-struct kinfo_pool {
-	unsigned int	pr_size;	/* size of a pool item */
-	unsigned int	pr_pgsize;	/* size of a "page" */
-	unsigned int	pr_itemsperpage; /* number of items per "page" */
-	unsigned int	pr_minpages;	/* same in page units */
-	unsigned int	pr_maxpages;	/* maximum # of idle pages to keep */
-	unsigned int	pr_hardlimit;	/* hard limit to number of allocated
-					   items */
+struct pool_sysctl {
+	char pr_wchan[16];
+	uint64_t pr_flags;
+	uint64_t pr_size;
+	uint64_t pr_pagesize;
+	uint64_t pr_itemsperpage;
+	uint64_t pr_nitems;
+	uint64_t pr_nout;
+	uint64_t pr_hardlimit;
+	uint64_t pr_npages;
+	uint64_t pr_minpages;
+	uint64_t pr_maxpages;
 
-	unsigned int	pr_npages;	/* # of pages allocated */
-	unsigned int	pr_nout;	/* # items currently allocated */
-	unsigned int	pr_nitems;	/* # items in the pool */
+	uint64_t pr_nget;
+	uint64_t pr_nfail;
+	uint64_t pr_nput;
+	uint64_t pr_npagealloc;
+	uint64_t pr_npagefree;
+	uint64_t pr_hiwat;
+	uint64_t pr_nidle;
 
-	unsigned long	pr_nget;	/* # of successful requests */
-	unsigned long	pr_nput;	/* # of releases */
-	unsigned long	pr_nfail;	/* # of unsuccessful requests */
-	unsigned long	pr_npagealloc;	/* # of pages allocated */
-	unsigned long	pr_npagefree;	/* # of pages released */
-	unsigned int	pr_hiwat;	/* max # of pages in pool */
-	unsigned long	pr_nidle;	/* # of idle pages */
+	uint64_t pr_cache_meta_size;
+	uint64_t pr_cache_nfull;
+	uint64_t pr_cache_npartial;
+	uint64_t pr_cache_nempty;
+	uint64_t pr_cache_ncontended;
+	uint64_t pr_cache_nmiss_global;
+	uint64_t pr_cache_nhit_global;
+	uint64_t pr_cache_nmiss_pcpu;
+	uint64_t pr_cache_nhit_pcpu;
 };
 
-struct kinfo_pool_cache {
-	uint64_t	pr_ngc;		/* # of times a list has been gc'ed */
-	unsigned int	pr_len;		/* current target for list len */
-	unsigned int	pr_nitems;	/* # of idle items in the depot */
-	unsigned int	pr_contention;	/* # of times mtx was busy */
-};
+#ifdef _KERNEL
+#define __POOL_EXPOSE
+#endif
 
-/*
- * KERN_POOL_CACHE_CPUS provides an array, not a single struct. ie, it
- * provides struct kinfo_pool_cache_cpu kppc[ncpusfound].
- */
-struct kinfo_pool_cache_cpu {
-	unsigned int	pr_cpu;		/* which cpu this cache is on */
-
-	/* counters for times items were handled by the cache */
-	uint64_t	pr_nget;	/* # of requests */
-	uint64_t	pr_nfail;	/* # of unsuccessful requests */
-	uint64_t	pr_nput;	/* # of releases */
-
-	/* counters for times the cache interacted with the pool */
-	uint64_t	pr_nlget;	/* # of list requests */
-	uint64_t	pr_nlfail;	/* # of unsuccessful list requests */
-	uint64_t	pr_nlput;	/* # of list releases */
-};
-
-#if defined(_KERNEL) || defined(_LIBKVM)
-
-#include <sys/queue.h>
-#include <sys/tree.h>
+#ifdef __POOL_EXPOSE
+#include <sys/param.h>
 #include <sys/mutex.h>
-#include <sys/rwlock.h>
+#include <sys/condvar.h>
+#include <sys/queue.h>
+#include <sys/time.h>
+#include <sys/tree.h>
+#include <sys/callback.h>
+
+#ifdef _KERNEL_OPT
+#include "opt_pool.h"
+#endif
+
+#define POOL_PADDR_INVALID	((paddr_t) -1)
 
 struct pool;
-struct pool_request;
-struct pool_lock_ops;
-TAILQ_HEAD(pool_requests, pool_request);
 
 struct pool_allocator {
-	void		*(*pa_alloc)(struct pool *, int, int *);
-	void		 (*pa_free)(struct pool *, void *);
-	size_t		   pa_pagesz;
+	void		*(*pa_alloc)(struct pool *, int);
+	void		(*pa_free)(struct pool *, void *);
+	unsigned int	pa_pagesz;
+
+	/* The following fields are for internal use only. */
+	kmutex_t	pa_lock;
+	TAILQ_HEAD(, pool) pa_list;	/* list of pools using this allocator */
+	uint32_t	pa_refcnt;	/* number of pools using this allocator */
+	int		pa_pagemask;
+	int		pa_pageshift;
 };
 
-/*
- * The pa_pagesz member encodes the sizes of pages that can be
- * provided by the allocator, and whether the allocations can be
- * aligned to their size.
- *
- * Page sizes can only be powers of two. Each available page size is
- * represented by its value set as a bit. e.g., to indicate that an
- * allocator can provide 16k and 32k pages you initialise pa_pagesz
- * to (32768 | 16384).
- *
- * If the allocator can provide aligned pages the low bit in pa_pagesz
- * is set. The POOL_ALLOC_ALIGNED macro is provided as a convenience.
- *
- * If pa_pagesz is unset (i.e. 0), POOL_ALLOC_DEFAULT will be used
- * instead.
- */
+LIST_HEAD(pool_pagelist,pool_item_header);
+SPLAY_HEAD(phtree, pool_item_header);
 
-#define POOL_ALLOC_ALIGNED		1UL
-#define POOL_ALLOC_SIZE(_sz, _a)	((_sz) | (_a))
-#define POOL_ALLOC_SIZES(_min, _max, _a) \
-	((_max) | \
-	(((_max) - 1) & ~((_min) - 1)) | (_a))
-
-#define POOL_ALLOC_DEFAULT \
-	POOL_ALLOC_SIZE(PAGE_SIZE, POOL_ALLOC_ALIGNED)
-
-TAILQ_HEAD(pool_pagelist, pool_page_header);
-
-struct pool_cache_item;
-TAILQ_HEAD(pool_cache_lists, pool_cache_item);
-struct cpumem;
-
-union pool_lock {
-	struct mutex	prl_mtx;
-	struct rwlock	prl_rwlock;
-};
+#define POOL_QUARANTINE_DEPTH	128
+typedef struct {
+	size_t rotor;
+	intptr_t list[POOL_QUARANTINE_DEPTH];
+} pool_quar_t;
 
 struct pool {
-	struct refcnt	pr_refcnt;
-	union pool_lock	pr_lock;
-	const struct pool_lock_ops *
-			pr_lock_ops;
-	SIMPLEQ_ENTRY(pool)
+	TAILQ_ENTRY(pool)
 			pr_poollist;
 	struct pool_pagelist
 			pr_emptypages;	/* Empty pages */
@@ -161,62 +121,75 @@ struct pool {
 			pr_fullpages;	/* Full pages */
 	struct pool_pagelist
 			pr_partpages;	/* Partially-allocated pages */
-	struct pool_page_header	*
-			pr_curpage;
+	struct pool_item_header	*pr_curpage;
+	struct pool	*pr_phpool;	/* Pool item header pool */
+	struct pool_cache *pr_cache;	/* Cache for this pool */
 	unsigned int	pr_size;	/* Size of item */
-	unsigned int	pr_minitems;	/* minimum # of items to keep */
-	unsigned int	pr_minpages;	/* same in page units */
-	unsigned int	pr_maxpages;	/* maximum # of idle pages to keep */
+	unsigned int	pr_align;	/* Requested alignment, must be 2^n */
+	unsigned int	pr_itemoffset;	/* offset of the item space */
+	unsigned int	pr_minitems;	/* minimum # of free items to keep */
+	unsigned int	pr_maxitems;	/* maximum # of free items to keep */
+	unsigned int	pr_minpages;	/* minimum # of pages to keep */
+	unsigned int	pr_maxpages;	/* maximum # of pages to keep */
 	unsigned int	pr_npages;	/* # of pages allocated */
 	unsigned int	pr_itemsperpage;/* # items that fit in a page */
-	unsigned int	pr_slack;	/* unused space in a page */
-	unsigned int	pr_nitems;	/* number of available items in pool */
+	unsigned int	pr_poolid;	/* id of the pool */
+	unsigned int	pr_nitems;	/* number of free items in pool */
 	unsigned int	pr_nout;	/* # items currently allocated */
 	unsigned int	pr_hardlimit;	/* hard limit to number of allocated
 					   items */
-	unsigned int	pr_serial;	/* unique serial number of the pool */
-	unsigned int	pr_pgsize;	/* Size of a "page" */
-	vaddr_t		pr_pgmask;	/* Mask with an item to get a page */
-	struct pool_allocator *
-			pr_alloc;	/* backend allocator */
-	const char *	pr_wchan;	/* tsleep(9) identifier */
-#define PR_WAITOK	0x0001 /* M_WAITOK */
-#define PR_NOWAIT	0x0002 /* M_NOWAIT */
-#define PR_LIMITFAIL	0x0004 /* M_CANFAIL */
-#define PR_ZERO		0x0008 /* M_ZERO */
-#define PR_RWLOCK	0x0010
-#define PR_WANTED	0x0100
+	unsigned int	pr_refcnt;	/* ref count for pagedaemon, etc */
+	struct pool_allocator *pr_alloc;/* back-end allocator */
+	TAILQ_ENTRY(pool) pr_alloc_list;/* link on allocator's pool list */
 
-	int		pr_flags;
-	int		pr_ipl;
+	/* Drain hook. */
+	void		(*pr_drain_hook)(void *, int);
+	void		*pr_drain_hook_arg;
 
-	RBT_HEAD(phtree, pool_page_header)
-			pr_phtree;
-
-	struct cpumem *	pr_cache;
-	unsigned long	pr_cache_magic[2];
-	union pool_lock	pr_cache_lock;
-	struct pool_cache_lists
-			pr_cache_lists;	/* list of idle item lists */
-	u_int		pr_cache_nitems; /* # of idle items */
-	u_int		pr_cache_items;	/* target list length */
-	u_int		pr_cache_contention;
-	u_int		pr_cache_contention_prev;
-	uint64_t	pr_cache_timestamp;	/* time idle list was empty */
-	uint64_t	pr_cache_ngc;	/* # of times the gc released a list */
-	int		pr_cache_nout;
-
-	u_int		pr_align;
-	u_int		pr_maxcolors;	/* Cache coloring */
-	int		pr_phoffset;	/* Offset in page of page header */
+	const char	*pr_wchan;	/* tsleep(9) identifier */
+	unsigned int	pr_flags;	/* r/w flags */
+	unsigned int	pr_roflags;	/* r/o flags */
+#define PR_WAITOK	0x01	/* Note: matches KM_SLEEP */
+#define PR_NOWAIT	0x02	/* Note: matches KM_NOSLEEP */
+#define PR_WANTED	0x04	/* waiting for free objects */
+#define PR_PHINPAGE	0x40	/* page header in page */
+#define PR_LIMITFAIL	0x100	/* even if waiting, fail if we hit limit */
+#define PR_RECURSIVE	0x200	/* pool contains pools, for vmstat(8) */
+#define PR_NOTOUCH	0x400	/* don't use free items to keep internal state*/
+#define PR_NOALIGN	0x800	/* don't assume backend alignment */
+#define PR_LARGECACHE	0x1000	/* use large cache groups */
+#define PR_GROWING	0x2000	/* pool_grow in progress */
+#define PR_GROWINGNOWAIT 0x4000	/* pool_grow in progress by PR_NOWAIT alloc */
+#define PR_ZERO		0x8000	/* zero data before returning */
+#define PR_USEBMAP	0x10000	/* use a bitmap to manage freed items */
+#define PR_PSERIALIZE	0x20000	/* needs pserialize sync point before free */
 
 	/*
-	 * pool item requests queue
+	 * `pr_lock' protects the pool's data structures when removing
+	 * items from or returning items to the pool, or when reading
+	 * or updating read/write fields in the pool descriptor.
+	 *
+	 * We assume back-end page allocators provide their own locking
+	 * scheme.  They will be called with the pool descriptor _unlocked_,
+	 * since the page allocators may block.
 	 */
-	union pool_lock	pr_requests_lock;
-	struct pool_requests
-			pr_requests;
-	unsigned int	pr_requesting;
+	kmutex_t	pr_lock;
+	kcondvar_t	pr_cv;
+	int		pr_ipl;
+
+	struct phtree	pr_phtree;
+
+	int		pr_maxcolor;	/* Cache colouring */
+	int		pr_curcolor;
+	int		pr_phoffset;	/* unused */
+
+	/*
+	 * Warning message to be issued, and a per-time-delta rate cap,
+	 * if the hard limit is reached.
+	 */
+	const char	*pr_hardlimit_warning;
+	struct timeval	pr_hardlimit_ratecap;
+	struct timeval	pr_hardlimit_warning_last;
 
 	/*
 	 * Instrumentation
@@ -229,59 +202,171 @@ struct pool {
 	unsigned int	pr_hiwat;	/* max # of pages in pool */
 	unsigned long	pr_nidle;	/* # of idle pages */
 
-	/* Physical memory configuration. */
-	const struct kmem_pa_mode *
-			pr_crange;
+	/*
+	 * Diagnostic aides.
+	 */
+	void		*pr_freecheck;
+	void		*pr_qcache;
+	bool		pr_redzone;
+	size_t		pr_reqsize;
+	size_t		pr_reqsize_with_redzone;
+#ifdef POOL_QUARANTINE
+	pool_quar_t	pr_quar;
+#endif
 };
 
-#endif /* _KERNEL || _LIBKVM */
+/*
+ * Cache group sizes, assuming 4-byte paddr_t on !_LP64.
+ * All groups will be aligned to COHERENCY_UNIT.
+ */
+#ifdef _LP64
+#define PCG_NOBJECTS_NORMAL	15	/* 256 byte group */
+#define PCG_NOBJECTS_LARGE	63	/* 1024 byte group */
+#else
+#define PCG_NOBJECTS_NORMAL	14	/* 124 byte group */
+#define PCG_NOBJECTS_LARGE	62	/* 508 byte group */
+#endif
+
+typedef struct pcgpair {
+	void	*pcgo_va;		/* object virtual address */
+	paddr_t	pcgo_pa;		/* object physical address */
+} pcgpair_t;
+
+/* The pool cache group. */
+typedef struct pool_cache_group {
+	struct pool_cache_group	*pcg_next;	/* link to next group */
+	u_int			pcg_avail;	/* # available objects */
+	u_int			pcg_size;	/* max number objects */
+	pcgpair_t 		pcg_objects[1];	/* the objects */
+} pcg_t;
+
+/* Pool cache CPU.  Sized to 64 bytes on _LP64. */
+typedef struct pool_cache_cpu {
+	struct pool_cache_group	*cc_current;
+	struct pool_cache_group	*cc_previous;	
+	pcg_t *volatile 	*cc_pcgcache;
+	uint64_t		cc_misses;
+	uint64_t		cc_hits;
+	uint64_t		cc_pcmisses;
+	uint64_t		cc_contended;
+	uint32_t		cc_nfull;
+	uint32_t		cc_npart;
+} pool_cache_cpu_t;
+
+struct pool_cache {
+	/* Pool layer. */
+	struct pool	pc_pool;
+	
+	/* Cache layer. */
+	TAILQ_ENTRY(pool_cache)
+			pc_cachelist;	/* entry on global cache list */
+	struct pool	*pc_pcgpool;	/* Pool of cache groups */
+	pcg_t *volatile *pc_pcgcache;	/* list of empty cache groups */
+	int		pc_pcgsize;	/* Use large cache groups? */
+	int		pc_ncpu;	/* number cpus set up */
+	int		(*pc_ctor)(void *, void *, int);
+	void		(*pc_dtor)(void *, void *);
+	void		*pc_arg;	/* for ctor/dtor */
+	unsigned int	pc_refcnt;	/* ref count for pagedaemon, etc */
+	unsigned int	pc_roflags;	/* r/o cache flags */
+	void		*pc_cpus[MAXCPUS];
+
+	/* Diagnostic aides. */
+	void		*pc_freecheck;
+	bool		pc_redzone;
+	size_t		pc_reqsize;
+
+	/* Hot items. */
+	pcg_t *volatile pc_fullgroups	/* list of full cache groups */
+	    __aligned(CACHE_LINE_SIZE);
+	pcg_t *volatile pc_partgroups;	/* groups for reclamation */
+
+	/* Boot cpu. */
+	pool_cache_cpu_t pc_cpu0 __aligned(CACHE_LINE_SIZE);
+};
+
+#endif /* __POOL_EXPOSE */
+
+typedef struct pool_cache *pool_cache_t;
 
 #ifdef _KERNEL
+/*
+ * pool_allocator_kmem is the default that all pools get unless
+ * otherwise specified.  pool_allocator_nointr is provided for
+ * pools that know they will never be accessed in interrupt
+ * context.
+ */
+extern struct pool_allocator pool_allocator_kmem;
+extern struct pool_allocator pool_allocator_nointr;
+extern struct pool_allocator pool_allocator_meta;
 
-extern struct pool_allocator pool_allocator_single;
-extern struct pool_allocator pool_allocator_multi;
+void		pool_subsystem_init(void);
 
-struct pool_request {
-	TAILQ_ENTRY(pool_request) pr_entry;
-	void (*pr_handler)(struct pool *, void *, void *);
-	void *pr_cookie;
-	void *pr_item;
-};
-
-void		pool_init(struct pool *, size_t, u_int, int, int,
-		    const char *, struct pool_allocator *);
-void		pool_cache_init(struct pool *);
+void		pool_init(struct pool *, size_t, u_int, u_int,
+		    int, const char *, struct pool_allocator *, int);
 void		pool_destroy(struct pool *);
+
+void		pool_set_drain_hook(struct pool *,
+		    void (*)(void *, int), void *);
+
+void		*pool_get(struct pool *, int);
+void		pool_put(struct pool *, void *);
+int		pool_reclaim(struct pool *);
+
+void		pool_prime(struct pool *, int);
 void		pool_setlowat(struct pool *, int);
 void		pool_sethiwat(struct pool *, int);
-int		pool_sethardlimit(struct pool *, u_int);
-void		pool_set_constraints(struct pool *,
-		    const struct kmem_pa_mode *mode);
+void		pool_sethardlimit(struct pool *, int, const char *, int);
+bool		pool_drain(struct pool **);
+int		pool_totalpages(void);
+int		pool_totalpages_locked(void);
 
-void		*pool_get(struct pool *, int) __malloc;
-void		pool_request_init(struct pool_request *,
-		    void (*)(struct pool *, void *, void *), void *);
-void		pool_request(struct pool *, struct pool_request *);
-void		pool_put(struct pool *, void *);
-void		pool_wakeup(struct pool *);
-int		pool_reclaim(struct pool *);
-void		pool_reclaim_all(void);
-int		pool_prime(struct pool *, int);
+unsigned int	pool_nget(struct pool *);
+unsigned int	pool_nput(struct pool *);
 
-#ifdef DDB
 /*
  * Debugging and diagnostic aides.
  */
 void		pool_printit(struct pool *, const char *,
-		    int (*)(const char *, ...));
-void		pool_walk(struct pool *, int, int (*)(const char *, ...),
-		    void (*)(void *, int, int (*)(const char *, ...)));
-#endif
+    void (*)(const char *, ...) __printflike(1, 2));
+void		pool_printall(const char *, void (*)(const char *, ...)
+    __printflike(1, 2));
+int		pool_chk(struct pool *, const char *);
 
-/* the allocator for dma-able memory is a thin layer on top of pool  */
-void		 dma_alloc_init(void);
-void		*dma_alloc(size_t size, int flags);
-void		 dma_free(void *m, size_t size);
+/*
+ * Pool cache routines.
+ */
+pool_cache_t	pool_cache_init(size_t, u_int, u_int, u_int, const char *,
+		    struct pool_allocator *, int, int (*)(void *, void *, int),
+		    void (*)(void *, void *), void *);
+void		pool_cache_bootstrap(pool_cache_t, size_t, u_int, u_int, u_int,
+		    const char *, struct pool_allocator *, int,
+		    int (*)(void *, void *, int), void (*)(void *, void *),
+		    void *);
+void		pool_cache_destroy(pool_cache_t);
+void		pool_cache_bootstrap_destroy(pool_cache_t);
+void		*pool_cache_get_paddr(pool_cache_t, int, paddr_t *);
+void		pool_cache_put_paddr(pool_cache_t, void *, paddr_t);
+void		pool_cache_destruct_object(pool_cache_t, void *);
+void		pool_cache_invalidate(pool_cache_t);
+bool		pool_cache_reclaim(pool_cache_t);
+void		pool_cache_set_drain_hook(pool_cache_t,
+		    void (*)(void *, int), void *);
+void		pool_cache_setlowat(pool_cache_t, int);
+void		pool_cache_sethiwat(pool_cache_t, int);
+void		pool_cache_sethardlimit(pool_cache_t, int, const char *, int);
+void		pool_cache_prime(pool_cache_t, int);
+void		pool_cache_cpu_init(struct cpu_info *);
+
+unsigned int	pool_cache_nget(pool_cache_t);
+unsigned int	pool_cache_nput(pool_cache_t);
+
+#define		pool_cache_get(pc, f) pool_cache_get_paddr((pc), (f), NULL)
+#define		pool_cache_put(pc, o) pool_cache_put_paddr((pc), (o), \
+				          POOL_PADDR_INVALID)
+
+void		pool_whatis(uintptr_t, void (*)(const char *, ...)
+    __printflike(1, 2));
 #endif /* _KERNEL */
 
 #endif /* _SYS_POOL_H_ */

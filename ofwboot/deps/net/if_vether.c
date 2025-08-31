@@ -1,7 +1,9 @@
-/* $OpenBSD: if_vether.c,v 1.37 2025/07/07 02:28:50 jsg Exp $ */
+/*	$NetBSD: if_vether.c,v 1.4 2024/09/26 09:59:55 roy Exp $	*/
+/* $OpenBSD: if_vether.c,v 1.27 2016/04/13 11:41:15 mpi Exp $ */
 
 /*
  * Copyright (c) 2009 Theo de Raadt
+ * Copyright (c) 2020 Roy Marples
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,157 +18,179 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <sys/param.h>
-#include <sys/systm.h>
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: if_vether.c,v 1.4 2024/09/26 09:59:55 roy Exp $");
+
+#include <sys/cprng.h>
+#include <sys/kmem.h>
 #include <sys/mbuf.h>
-#include <sys/sockio.h>
 
 #include <net/if.h>
+#include <net/if_ether.h>
 #include <net/if_media.h>
-
-#include <netinet/in.h>
-#include <netinet/if_ether.h>
-
-#include "bpfilter.h"
-#if NBPFILTER > 0
 #include <net/bpf.h>
-#endif
 
-void	vetherattach(int);
-int	vetherioctl(struct ifnet *, u_long, caddr_t);
-void	vetherqstart(struct ifqueue *);
-int	vether_clone_create(struct if_clone *, int);
-int	vether_clone_destroy(struct ifnet *);
-int	vether_media_change(struct ifnet *);
-void	vether_media_status(struct ifnet *, struct ifmediareq *);
+void		vetherattach(int);
+static int	vether_ioctl(struct ifnet *, u_long, void *);
+static int	vether_mediachange(struct ifnet *);
+static void	vether_mediastatus(struct ifnet *, struct ifmediareq *);
+static void	vether_start(struct ifnet *);
+static int	vether_clone_create(struct if_clone *, int);
+static int	vether_clone_destroy(struct ifnet *);
+
+static void	vether_stop(struct ifnet *, int);
+static int	vether_init(struct ifnet *);
 
 struct vether_softc {
-	struct arpcom		sc_ac;
-	struct ifmedia		sc_media;
+	struct ethercom		sc_ec;
+	struct ifmedia		sc_im;
 };
 
 struct if_clone	vether_cloner =
     IF_CLONE_INITIALIZER("vether", vether_clone_create, vether_clone_destroy);
 
-int
-vether_media_change(struct ifnet *ifp)
-{
-	return (0);
-}
-
-void
-vether_media_status(struct ifnet *ifp, struct ifmediareq *imr)
-{
-	imr->ifm_active = IFM_ETHER | IFM_AUTO;
-	imr->ifm_status = IFM_AVALID | IFM_ACTIVE;
-}
-
 void
 vetherattach(int nvether)
 {
+
 	if_clone_attach(&vether_cloner);
 }
 
-int
+static int
 vether_clone_create(struct if_clone *ifc, int unit)
 {
-	struct ifnet		*ifp;
-	struct vether_softc	*sc;
+	struct ifnet *ifp;
+	struct vether_softc *sc;
+	uint8_t enaddr[ETHER_ADDR_LEN] =
+	    { 0xf2, 0x0b, 0xa4, 0xff, 0xff, 0xff };
 
-	sc = malloc(sizeof(*sc), M_DEVBUF, M_WAITOK|M_ZERO);
-	ifp = &sc->sc_ac.ac_if;
-	snprintf(ifp->if_xname, sizeof ifp->if_xname, "vether%d", unit);
-	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
-	ether_fakeaddr(ifp);
+	sc = kmem_zalloc(sizeof(*sc), KM_SLEEP);
 
+	sc->sc_ec.ec_ifmedia = &sc->sc_im;
+	ifmedia_init(&sc->sc_im, 0, vether_mediachange, vether_mediastatus);
+	ifmedia_add(&sc->sc_im, IFM_ETHER|IFM_AUTO, 0, NULL);
+	ifmedia_add(&sc->sc_im, IFM_ETHER|IFM_NONE, 0, NULL);
+	ifmedia_set(&sc->sc_im, IFM_ETHER|IFM_AUTO);
+
+	ifp = &sc->sc_ec.ec_if;
+	if_initname(ifp, ifc->ifc_name, unit);
 	ifp->if_softc = sc;
-	ifp->if_ioctl = vetherioctl;
-	ifp->if_qstart = vetherqstart;
+	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
+#ifdef NET_MPSAFE
+	ifp->if_extflags = IFEF_MPSAFE;
+#endif
+	ifp->if_ioctl = vether_ioctl;
+	ifp->if_start = vether_start;
+	ifp->if_stop  = vether_stop;
+	ifp->if_init  = vether_init;
+	IFQ_SET_MAXLEN(&ifp->if_snd, IFQ_MAXLEN);
+	IFQ_SET_READY(&ifp->if_snd);
 
-	ifp->if_hardmtu = ETHER_MAX_HARDMTU_LEN;
-	ifp->if_capabilities = IFCAP_VLAN_MTU;
-	ifp->if_xflags = IFXF_CLONED | IFXF_MPSAFE;
+	sc->sc_ec.ec_capabilities = ETHERCAP_VLAN_MTU | ETHERCAP_JUMBO_MTU;
 
-	ifmedia_init(&sc->sc_media, 0, vether_media_change,
-	    vether_media_status);
-	ifmedia_add(&sc->sc_media, IFM_ETHER | IFM_AUTO, 0, NULL);
-	ifmedia_set(&sc->sc_media, IFM_ETHER | IFM_AUTO);
+	/*
+	 * In order to obtain unique initial Ethernet address on a host,
+	 * do some randomisation.  It's not meant for anything but avoiding
+	 * hard-coding an address.
+	 */
+	cprng_fast(&enaddr[3], 3);
 
-	if_attach(ifp);
-	ether_ifattach(ifp);
-	return (0);
+	/* Those steps are mandatory for an Ethernet driver. */
+	if_initialize(ifp);
+	ether_ifattach(ifp, enaddr);
+	if_register(ifp);
+
+	/* Notify our link state */
+	vether_mediachange(ifp);
+
+	return 0;
 }
 
-int
+static int
 vether_clone_destroy(struct ifnet *ifp)
 {
-	struct vether_softc	*sc = ifp->if_softc;
+	struct vether_softc *sc = ifp->if_softc;
 
-	ifmedia_delete_instance(&sc->sc_media, IFM_INST_ANY);
 	ether_ifdetach(ifp);
 	if_detach(ifp);
-	free(sc, M_DEVBUF, sizeof(*sc));
-	return (0);
+	kmem_free(sc, sizeof(*sc));
+	return 0;
+}
+
+static int
+vether_init(struct ifnet *ifp)
+{
+
+	ifp->if_flags |= IFF_RUNNING;
+	vether_start(ifp);
+	return 0;
+}
+
+static int
+vether_mediachange(struct ifnet *ifp)
+{
+	struct vether_softc *sc = ifp->if_softc;
+	int link_state;
+
+	if (IFM_SUBTYPE(sc->sc_im.ifm_cur->ifm_media) == IFM_NONE)
+		link_state = LINK_STATE_DOWN;
+	else
+		link_state = LINK_STATE_UP;
+
+	if_link_state_change(ifp, link_state);
+	return 0;
+}
+
+static void
+vether_mediastatus(struct ifnet *ifp, struct ifmediareq *imr)
+{
+	struct vether_softc *sc = ifp->if_softc;
+
+	imr->ifm_active = sc->sc_im.ifm_cur->ifm_media;
+
+	imr->ifm_status = IFM_AVALID;
+	if (IFM_SUBTYPE(imr->ifm_active) != IFM_NONE)
+		imr->ifm_status |= IFM_ACTIVE;
 }
 
 /*
  * The bridge has magically already done all the work for us,
  * and we only need to discard the packets.
  */
-void
-vetherqstart(struct ifqueue *ifq)
+static void
+vether_start(struct ifnet *ifp)
 {
-	struct mbuf		*m;
+	struct mbuf *m;
 
-	while ((m = ifq_dequeue(ifq)) != NULL) {
-#if NBPFILTER > 0
-		struct ifnet	*ifp = ifq->ifq_if;
-
-		if (ifp->if_bpf)
-			bpf_mtap(ifp->if_bpf, m, BPF_DIRECTION_OUT);
-#endif /* NBPFILTER > 0 */
-
+	for (;;) {
+		IFQ_DEQUEUE(&ifp->if_snd, m);
+		if (m == NULL)
+			break;
+		bpf_mtap(ifp, m, BPF_D_OUT);
 		m_freem(m);
+		if_statinc(ifp, if_opackets);
 	}
 }
 
-int
-vetherioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
+static void
+vether_stop(struct ifnet *ifp, __unused int disable)
 {
-	struct vether_softc	*sc = (struct vether_softc *)ifp->if_softc;
-	struct ifreq		*ifr = (struct ifreq *)data;
-	int			 error = 0, link_state;
+
+	ifp->if_flags &= ~IFF_RUNNING;
+}
+
+static int
+vether_ioctl(struct ifnet *ifp, unsigned long cmd, void *data)
+{
+	int error = 0;
 
 	switch (cmd) {
-	case SIOCSIFADDR:
-		ifp->if_flags |= IFF_UP;
-		/* FALLTHROUGH */
-
-	case SIOCSIFFLAGS:
-		if (ifp->if_flags & IFF_UP) {
-			ifp->if_flags |= IFF_RUNNING;
-			link_state = LINK_STATE_UP;
-		} else {
-			ifp->if_flags &= ~IFF_RUNNING;
-			link_state = LINK_STATE_DOWN;
-		}
-		if (ifp->if_link_state != link_state) {
-			ifp->if_link_state = link_state;
-			if_link_state_change(ifp);
-		}
-		break;
-
 	case SIOCADDMULTI:
 	case SIOCDELMULTI:
 		break;
 
-	case SIOCGIFMEDIA:
-	case SIOCSIFMEDIA:
-		error = ifmedia_ioctl(ifp, ifr, &sc->sc_media, cmd);
-		break;
-
 	default:
-		error = ether_ioctl(ifp, &sc->sc_ac, cmd, data);
+		error = ether_ioctl(ifp, cmd, data);
 	}
-	return (error);
+	return error;
 }

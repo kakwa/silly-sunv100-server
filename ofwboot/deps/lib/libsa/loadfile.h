@@ -1,8 +1,7 @@
-/*	$NetBSD: loadfile.h,v 1.1 1999/04/28 09:08:50 christos Exp $	 */
-/*	$OpenBSD: loadfile.h,v 1.7 2019/11/29 20:53:13 kettenis Exp $	 */
+/*	$NetBSD: loadfile.h,v 1.15 2021/05/21 21:52:15 jmcneill Exp $	 */
 
 /*-
- * Copyright (c) 1998 The NetBSD Foundation, Inc.
+ * Copyright (c) 1998, 2008 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
@@ -35,33 +34,63 @@
  */
 #define MARK_START	0
 #define MARK_ENTRY	1
-#define	MARK_NSYM	2
-#define MARK_SYM	3
-#define	MARK_END	4
-#define	MARK_RANDOM	5
-#define	MARK_ERANDOM	6
-#define	MARK_VENTRY	7 
-#define	MARK_MAX	8
+#define MARK_DATA	2
+#define MARK_NSYM	3
+#define MARK_SYM	4
+#define MARK_END	5
+#define MARK_MAX	6
 
 /*
  * Bit flags for sections to load
  */
-#define	LOAD_TEXT	0x0001
-#define	LOAD_DATA	0x0004
-#define	LOAD_BSS	0x0008
-#define	LOAD_SYM	0x0010
-#define	LOAD_HDR	0x0020
-#define	LOAD_RANDOM	0x0040
-#define LOAD_ALL	0x007d
+#define LOAD_TEXT	0x0001
+#define LOAD_TEXTA	0x0002
+#define LOAD_DATA	0x0004
+#define LOAD_BSS	0x0008
+#define LOAD_SYM	0x0010
+#define LOAD_HDR	0x0020
+#define LOAD_NOTE	0x0040
+#define LOAD_ALL	0x007f
+#define LOAD_MINIMAL	0x002f
+#define LOAD_BACKWARDS	0x0050
+#define LOAD_DYN	0x4000
 
-#define	COUNT_TEXT	0x0100
-#define	COUNT_DATA	0x0400
-#define	COUNT_BSS	0x0800
-#define	COUNT_SYM	0x1000
-#define	COUNT_HDR	0x2000
-#define	COUNT_RANDOM	0x4000
-#define COUNT_ALL	0x7d00
+#define COUNT_TEXT	0x0100
+#define COUNT_TEXTA	0x0200
+#define COUNT_DATA	0x0400
+#define COUNT_BSS	0x0800
+#define COUNT_SYM	0x1000
+#define COUNT_HDR	0x2000
+#define COUNT_ALL	0x3f00
 
-int loadfile(const char *, uint64_t *, int);
+int loadfile(const char *, u_long *, int);
+int fdloadfile(int fd, u_long *, int);
 
-#include <machine/loadfile_machdep.h>
+#ifndef MACHINE_LOADFILE_MACHDEP
+#define MACHINE_LOADFILE_MACHDEP "machine/loadfile_machdep.h"
+#endif
+#include MACHINE_LOADFILE_MACHDEP
+
+#ifdef BOOT_ECOFF
+#include <sys/exec_ecoff.h>
+int loadfile_coff(int, struct ecoff_exechdr *, u_long *, int);
+#endif
+
+#if defined(BOOT_ELF32) || defined(BOOT_ELF64)
+#include <sys/exec_elf.h>
+#ifdef BOOT_ELF32
+int loadfile_elf32(int, Elf32_Ehdr *, u_long *, int);
+#endif
+#ifdef BOOT_ELF64
+int loadfile_elf64(int, Elf64_Ehdr *, u_long *, int);
+#endif
+#endif /* BOOT_ELF32 || BOOT_ELF64 */
+
+#ifdef BOOT_AOUT
+#include <sys/exec_aout.h>
+int loadfile_aout(int, struct exec *, u_long *, int);
+#endif
+
+extern uint32_t netbsd_version;
+extern u_int netbsd_elf_class;
+extern u_int netbsd_elf_data;

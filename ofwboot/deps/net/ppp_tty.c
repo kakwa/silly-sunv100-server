@@ -1,9 +1,9 @@
-/*	$OpenBSD: ppp_tty.c,v 1.56 2025/07/07 02:28:50 jsg Exp $	*/
-/*	$NetBSD: ppp_tty.c,v 1.12 1997/03/24 21:23:10 christos Exp $	*/
+/*	$NetBSD: ppp_tty.c,v 1.73 2024/07/05 04:31:53 rin Exp $	*/
+/*	Id: ppp_tty.c,v 1.3 1996/07/01 01:04:11 paulus Exp 	*/
 
 /*
  * ppp_tty.c - Point-to-Point Protocol (PPP) driver for asynchronous
- *	       tty devices.
+ * 	       tty devices.
  *
  * Copyright (c) 1984-2000 Carnegie Mellon University. All rights reserved.
  *
@@ -81,7 +81,7 @@
  * Extensively modified by Paul Mackerras (paulus@cs.anu.edu.au).
  * Cleaned up a lot of the mbuf-related code to fix bugs that
  * caused system crashes and packet corruption.  Changed pppstart
- * so that it doesn't just give up with a collision if the whole
+ * so that it doesn't just give up with a "collision" if the whole
  * packet doesn't fit in the output ring buffer.
  *
  * Added priority queueing for interactive IP packets, following
@@ -92,54 +92,80 @@
 /* from if_sl.c,v 1.11 84/10/04 12:54:47 rick Exp */
 /* from NetBSD: if_ppp.c,v 1.15.2.2 1994/07/28 05:17:58 cgd Exp */
 
-#include "ppp.h"
-#if NPPP > 0
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: ppp_tty.c,v 1.73 2024/07/05 04:31:53 rin Exp $");
 
+#ifdef _KERNEL_OPT
+#include "ppp.h"
+#include "opt_ppp.h"
+#endif
 #define VJC
 #define PPP_COMPRESS
 
 #include <sys/param.h>
 #include <sys/proc.h>
 #include <sys/mbuf.h>
+#include <sys/dkstat.h>
 #include <sys/socket.h>
-#include <sys/timeout.h>
 #include <sys/ioctl.h>
-#include <sys/fcntl.h>
+#include <sys/file.h>
 #include <sys/tty.h>
+#include <sys/kernel.h>
 #include <sys/conf.h>
 #include <sys/vnode.h>
 #include <sys/systm.h>
-#include <sys/rwlock.h>
-#include <sys/pool.h>
+#include <sys/kauth.h>
 
 #include <net/if.h>
-#include <net/if_var.h>
+#include <net/if_types.h>
+
+#ifdef VJC
+#include <netinet/in.h>
+#include <netinet/in_systm.h>
+#include <netinet/ip.h>
+#include <net/slcompress.h>
+#endif
 
 #include <net/bpf.h>
 #include <net/ppp_defs.h>
 #include <net/if_ppp.h>
 #include <net/if_pppvar.h>
 
-int	pppstart_internal(struct tty *tp, int);
+static int	pppopen(dev_t dev, struct tty *tp);
+static int	pppclose(struct tty *tp, int flag);
+static int	pppread(struct tty *tp, struct uio *uio, int flag);
+static int	pppwrite(struct tty *tp, struct uio *uio, int flag);
+static int	ppptioctl(struct tty *tp, u_long cmd, void *data, int flag,
+			  struct lwp *);
+static int	pppinput(int c, struct tty *tp);
+static int	pppstart(struct tty *tp);
 
-u_int16_t pppfcs(u_int16_t fcs, u_char *cp, int len);
-void	pppasyncstart(struct ppp_softc *);
-void	pppasyncctlp(struct ppp_softc *);
-void	pppasyncrelinq(struct ppp_softc *);
-void	ppp_timeout(void *);
-void	ppppkt(struct ppp_softc *sc);
-void	pppdumpb(u_char *b, int l);
-void	ppplogchar(struct ppp_softc *, int);
+struct linesw ppp_disc = {	/* XXX should be static */
+	.l_name = "ppp",
+	.l_open = pppopen,
+	.l_close = pppclose,
+	.l_read = pppread,
+	.l_write = pppwrite,
+	.l_ioctl = ppptioctl,
+	.l_rint = pppinput,
+	.l_start = pppstart,
+	.l_modem = ttymodem,
+	.l_poll = ttpoll
+};
 
-struct rwlock ppp_pkt_init = RWLOCK_INITIALIZER("ppppktini");
-struct pool ppp_pkts;
-
-#define PKT_MAXLEN(_sc) ((_sc)->sc_mru + PPP_HDRLEN + PPP_FCSLEN)
+static uint16_t pppfcs(uint16_t fcs, const uint8_t *cp, int len);
+static void	pppasyncstart(struct ppp_softc *);
+static void	pppasyncctlp(struct ppp_softc *);
+static void	pppasyncrelinq(struct ppp_softc *);
+static void	ppp_timeout(void *);
+static void	pppgetm(struct ppp_softc *sc);
+static void	pppdumpb(u_char *b, int l);
+static void	ppplogchar(struct ppp_softc *, int);
 
 /*
  * Does c need to be escaped?
  */
-#define ESCAPE_P(c)	(sc->sc_asyncmap[(c) >> 5] & (1 << ((c) & 0x1F)))
+#define ESCAPE_P(c)	(sc->sc_asyncmap[(c) >> 5] & (1U << ((c) & 0x1F)))
 
 /*
  * Procedures for using an async tty interface for PPP.
@@ -148,33 +174,30 @@ struct pool ppp_pkts;
 /* This is a NetBSD-1.0 or later kernel. */
 #define CCOUNT(q)	((q)->c_cc)
 
+#define PPP_LOWAT	100	/* Process more output when < LOWAT on queue */
+#define	PPP_HIWAT	400	/* Don't start a new packet if HIWAT on que */
+
 /*
  * Line specific open routine for async tty devices.
  * Attach the given tty to the first available ppp unit.
  * Called from device open routine or ttioctl.
  */
-int
-pppopen(dev_t dev, struct tty *tp, struct proc *p)
+/* ARGSUSED */
+static int
+pppopen(dev_t dev, struct tty *tp)
 {
+    struct lwp *l = curlwp;		/* XXX */
     struct ppp_softc *sc;
     int error, s;
 
-    if ((error = suser(p)) != 0)
+    error = kauth_authorize_network(l->l_cred, KAUTH_NETWORK_INTERFACE_PPP,
+	KAUTH_REQ_NETWORK_INTERFACE_PPP_ADD, NULL, NULL, NULL);
+    if (error)
 	return (error);
-
-    rw_enter_write(&ppp_pkt_init);
-    if (ppp_pkts.pr_size == 0) {
-	extern const struct kmem_pa_mode kp_dma_contig;
-
-	pool_init(&ppp_pkts, sizeof(struct ppp_pkt), 0,
-	  IPL_TTY, 0, "ppppkts", NULL); /* IPL_SOFTTTY */
-	pool_set_constraints(&ppp_pkts, &kp_dma_contig);
-    }
-    rw_exit_write(&ppp_pkt_init);
 
     s = spltty();
 
-    if (tp->t_line == PPPDISC) {
+    if (tp->t_linesw == &ppp_disc) {
 	sc = (struct ppp_softc *) tp->t_sc;
 	if (sc != NULL && sc->sc_devp == (void *) tp) {
 	    splx(s);
@@ -182,7 +205,7 @@ pppopen(dev_t dev, struct tty *tp, struct proc *p)
 	}
     }
 
-    if ((sc = pppalloc(p->p_p->ps_pid)) == NULL) {
+    if ((sc = pppalloc(l->l_proc->p_pid)) == NULL) {
 	splx(s);
 	return ENXIO;
     }
@@ -190,10 +213,12 @@ pppopen(dev_t dev, struct tty *tp, struct proc *p)
     if (sc->sc_relinq)
 	(*sc->sc_relinq)(sc);	/* get previous owner to relinquish the unit */
 
-    timeout_set(&sc->sc_timo, ppp_timeout, sc);
+    /* Switch DLT to PPP-over-serial. */
+    bpf_change_type(&sc->sc_if, DLT_PPP_SERIAL, PPP_HDRLEN);
+
     sc->sc_ilen = 0;
-    sc->sc_pkt = NULL;
-    bzero(sc->sc_asyncmap, sizeof(sc->sc_asyncmap));
+    sc->sc_m = NULL;
+    memset(sc->sc_asyncmap, 0, sizeof(sc->sc_asyncmap));
     sc->sc_asyncmap[0] = 0xffffffff;
     sc->sc_asyncmap[3] = 0x60000000;
     sc->sc_rasyncmap = 0;
@@ -202,12 +227,14 @@ pppopen(dev_t dev, struct tty *tp, struct proc *p)
     sc->sc_ctlp = pppasyncctlp;
     sc->sc_relinq = pppasyncrelinq;
     sc->sc_outm = NULL;
-    ppppkt(sc);
+    pppgetm(sc);
     sc->sc_if.if_flags |= IFF_RUNNING;
     sc->sc_if.if_baudrate = tp->t_ospeed;
 
-    tp->t_sc = (caddr_t) sc;
+    tp->t_sc = (void *) sc;
+    ttylock(tp);
     ttyflush(tp, FREAD | FWRITE);
+    ttyunlock(tp);
 
     splx(s);
     return (0);
@@ -219,15 +246,18 @@ pppopen(dev_t dev, struct tty *tp, struct proc *p)
  * Detach the tty from the ppp unit.
  * Mimics part of ttyclose().
  */
-int
-pppclose(struct tty *tp, int flag, struct proc *p)
+static int
+pppclose(struct tty *tp, int flag)
 {
     struct ppp_softc *sc;
     int s;
 
     s = spltty();
+    ttylock(tp);
     ttyflush(tp, FREAD|FWRITE);
-    tp->t_line = 0;
+    ttyunlock(tp);	/* XXX */
+    ttyldisc_release(tp->t_linesw);
+    tp->t_linesw = ttyldisc_default();
     sc = (struct ppp_softc *) tp->t_sc;
     if (sc != NULL) {
 	tp->t_sc = NULL;
@@ -243,37 +273,34 @@ pppclose(struct tty *tp, int flag, struct proc *p)
 /*
  * Relinquish the interface unit to another device.
  */
-void
+static void
 pppasyncrelinq(struct ppp_softc *sc)
 {
     int s;
 
-    KERNEL_LOCK();
+    /* Change DLT to back none. */
+    bpf_change_type(&sc->sc_if, DLT_NULL, 0);
+
     s = spltty();
     m_freem(sc->sc_outm);
     sc->sc_outm = NULL;
-
-    if (sc->sc_pkt != NULL) {
-	ppp_pkt_free(sc->sc_pkt);
-	sc->sc_pkt = sc->sc_pktc = NULL;
-    }
+    m_freem(sc->sc_m);
+    sc->sc_m = NULL;
     if (sc->sc_flags & SC_TIMEOUT) {
-	timeout_del(&sc->sc_timo);
+	callout_stop(&sc->sc_timo_ch);
 	sc->sc_flags &= ~SC_TIMEOUT;
     }
     splx(s);
-    KERNEL_UNLOCK();
 }
 
 /*
  * Line specific (tty) read routine.
  */
-int
+static int
 pppread(struct tty *tp, struct uio *uio, int flag)
 {
     struct ppp_softc *sc = (struct ppp_softc *)tp->t_sc;
     struct mbuf *m, *m0;
-    int s;
     int error = 0;
 
     if (sc == NULL)
@@ -282,35 +309,37 @@ pppread(struct tty *tp, struct uio *uio, int flag)
      * Loop waiting for input, checking that nothing disastrous
      * happens in the meantime.
      */
-    s = spltty();
+    ttylock(tp);
     for (;;) {
-	if (tp != (struct tty *) sc->sc_devp || tp->t_line != PPPDISC) {
-	    splx(s);
+	if (tp != (struct tty *) sc->sc_devp ||
+	    tp->t_linesw != &ppp_disc) {
+	    ttyunlock(tp);
 	    return 0;
 	}
-	/* Get the packet from the input queue */
-	m0 = mq_dequeue(&sc->sc_inq);
-	if (m0 != NULL)
+	if (sc->sc_inq.ifq_head != NULL)
 	    break;
 	if ((tp->t_state & TS_CARR_ON) == 0 && (tp->t_cflag & CLOCAL) == 0
 	    && (tp->t_state & TS_ISOPEN)) {
-	    splx(s);
+	    ttyunlock(tp);
 	    return 0;		/* end of file */
 	}
 	if (tp->t_state & TS_ASYNC || flag & IO_NDELAY) {
-	    splx(s);
+	    ttyunlock(tp);
 	    return (EWOULDBLOCK);
 	}
-	error = ttysleep(tp, (caddr_t)&tp->t_rawq, TTIPRI|PCATCH, ttyin);
+	error = ttysleep(tp, &tp->t_rawcv, true, 0);
 	if (error) {
-	    splx(s);
+	    ttyunlock(tp);
 	    return error;
 	}
     }
 
     /* Pull place-holder byte out of canonical queue */
     getc(&tp->t_canq);
-    splx(s);
+
+    /* Get the packet from the input queue */
+    IF_DEQUEUE(&sc->sc_inq, m0);
+    ttyunlock(tp);
 
     for (m = m0; m && uio->uio_resid; m = m->m_next)
 	if ((error = uiomove(mtod(m, u_char *), m->m_len, uio)) != 0)
@@ -322,36 +351,37 @@ pppread(struct tty *tp, struct uio *uio, int flag)
 /*
  * Line specific (tty) write routine.
  */
-int
+static int
 pppwrite(struct tty *tp, struct uio *uio, int flag)
 {
     struct ppp_softc *sc = (struct ppp_softc *)tp->t_sc;
-    struct mbuf *m, *m0, **mp;
+    struct mbuf *m, *m0;
     struct sockaddr dst;
-    u_int len;
-    int error;
+    int len, error;
 
     if ((tp->t_state & TS_CARR_ON) == 0 && (tp->t_cflag & CLOCAL) == 0)
 	return 0;		/* wrote 0 bytes */
-    if (tp->t_line != PPPDISC)
+    if (tp->t_linesw != &ppp_disc)
 	return (EINVAL);
     if (sc == NULL || tp != (struct tty *) sc->sc_devp)
 	return EIO;
     if (uio->uio_resid > sc->sc_if.if_mtu + PPP_HDRLEN ||
 	uio->uio_resid < PPP_HDRLEN)
 	return (EMSGSIZE);
-    for (mp = &m0; uio->uio_resid; mp = &m->m_next) {
-	if (mp == &m0) {
-	    MGETHDR(m, M_WAIT, MT_DATA);
-	    m->m_pkthdr.len = uio->uio_resid - PPP_HDRLEN;
-	    m->m_pkthdr.ph_ifidx = 0;
-	} else
-	    MGET(m, M_WAIT, MT_DATA);
-	*mp = m;
-	m->m_len = 0;
-	if (uio->uio_resid >= MCLBYTES / 2)
-	    MCLGET(m, M_DONTWAIT);
-	len = m_trailingspace(m);
+
+    MGETHDR(m0, M_WAIT, MT_DATA);
+    if (m0 == NULL)
+	return ENOBUFS;
+
+    m0->m_len = 0;
+    m0->m_pkthdr.len = uio->uio_resid;
+    m_reset_rcvif(m0);
+
+    if (uio->uio_resid >= MCLBYTES / 2)
+	MCLGET(m0, M_DONTWAIT);
+
+    for (m = m0; uio->uio_resid;) {
+	len = M_TRAILINGSPACE(m);
 	if (len > uio->uio_resid)
 	    len = uio->uio_resid;
 	if ((error = uiomove(mtod(m, u_char *), len, uio)) != 0) {
@@ -359,13 +389,22 @@ pppwrite(struct tty *tp, struct uio *uio, int flag)
 	    return (error);
 	}
 	m->m_len = len;
+
+	if (uio->uio_resid == 0)
+	    break;
+
+	MGET(m->m_next, M_WAIT, MT_DATA);
+	if (m->m_next == NULL) {
+	    m_freem(m0);
+	    return ENOBUFS;
+	}
+	m = m->m_next;
+	m->m_len = 0;
     }
     dst.sa_family = AF_UNSPEC;
     bcopy(mtod(m0, u_char *), dst.sa_data, PPP_HDRLEN);
-    m0->m_data += PPP_HDRLEN;
-    m0->m_len -= PPP_HDRLEN;
-    m0->m_pkthdr.ph_rtableid = sc->sc_if.if_rdomain;
-    return sc->sc_if.if_output(&sc->sc_if, m0, &dst, NULL);
+    m_adj(m0, PPP_HDRLEN);
+    return if_output_lock(&sc->sc_if, &sc->sc_if, m0, &dst, (struct rtentry *)0);
 }
 
 /*
@@ -373,19 +412,28 @@ pppwrite(struct tty *tp, struct uio *uio, int flag)
  * This discipline requires that tty device drivers call
  * the line specific l_ioctl routine from their ioctl routines.
  */
-int
-ppptioctl(struct tty *tp, u_long cmd, caddr_t data, int flag, struct proc *p)
+/* ARGSUSED */
+static int
+ppptioctl(struct tty *tp, u_long cmd, void *data, int flag, struct lwp *l)
 {
     struct ppp_softc *sc = (struct ppp_softc *) tp->t_sc;
     int error, s;
 
-    if (sc == NULL || tp != (struct tty *) sc->sc_devp)
-	return -1;
+    if (sc == NULL)
+        return (EPASSTHROUGH);
+
+    KERNEL_LOCK(1, NULL);
+
+    if (tp != (struct tty *) sc->sc_devp) {
+        error = EPASSTHROUGH;
+        goto out;
+    }
 
     error = 0;
     switch (cmd) {
     case PPPIOCSASYNCMAP:
-	if ((error = suser(p)) != 0)
+	if ((error = kauth_authorize_device_tty(l->l_cred,
+ 	  KAUTH_DEVICE_TTY_PRIVSET, tp)) != 0)
 	    break;
 	sc->sc_asyncmap[0] = *(u_int *)data;
 	break;
@@ -395,7 +443,8 @@ ppptioctl(struct tty *tp, u_long cmd, caddr_t data, int flag, struct proc *p)
 	break;
 
     case PPPIOCSRASYNCMAP:
-	if ((error = suser(p)) != 0)
+	if ((error = kauth_authorize_device_tty(l->l_cred,
+	  KAUTH_DEVICE_TTY_PRIVSET, tp)) != 0)
 	    break;
 	sc->sc_rasyncmap = *(u_int *)data;
 	break;
@@ -405,7 +454,8 @@ ppptioctl(struct tty *tp, u_long cmd, caddr_t data, int flag, struct proc *p)
 	break;
 
     case PPPIOCSXASYNCMAP:
-	if ((error = suser(p)) != 0)
+	if ((error = kauth_authorize_device_tty(l->l_cred,
+	  KAUTH_DEVICE_TTY_PRIVSET, tp)) != 0)
 	    break;
 	s = spltty();
 	bcopy(data, sc->sc_asyncmap, sizeof(sc->sc_asyncmap));
@@ -420,20 +470,20 @@ ppptioctl(struct tty *tp, u_long cmd, caddr_t data, int flag, struct proc *p)
 	break;
 
     default:
-	NET_LOCK();
-	error = pppioctl(sc, cmd, data, flag, p);
-	NET_UNLOCK();
+	error = pppioctl(sc, cmd, data, flag, l);
 	if (error == 0 && cmd == PPPIOCSMRU)
-	    ppppkt(sc);
+	    pppgetm(sc);
     }
 
+ out:
+    KERNEL_UNLOCK_ONE(NULL);
     return error;
 }
 
 /*
  * FCS lookup table as calculated by genfcstab.
  */
-static u_int16_t fcstab[256] = {
+static const uint16_t fcstab[256] = {
 	0x0000,	0x1189,	0x2312,	0x329b,	0x4624,	0x57ad,	0x6536,	0x74bf,
 	0x8c48,	0x9dc1,	0xaf5a,	0xbed3,	0xca6c,	0xdbe5,	0xe97e,	0xf8f7,
 	0x1081,	0x0108,	0x3393,	0x221a,	0x56a5,	0x472c,	0x75b7,	0x643e,
@@ -471,8 +521,8 @@ static u_int16_t fcstab[256] = {
 /*
  * Calculate a new FCS given the current FCS and the new data.
  */
-u_int16_t
-pppfcs(u_int16_t fcs, u_char *cp, int len)
+static uint16_t
+pppfcs(uint16_t fcs, const uint8_t *cp, int len)
 {
     while (len--)
 	fcs = PPP_FCS(fcs, *cp++);
@@ -480,10 +530,10 @@ pppfcs(u_int16_t fcs, u_char *cp, int len)
 }
 
 /*
- * This gets called from pppoutput when a new packet is
- * put on a queue.
+ * This gets called at splsoftnet from if_ppp.c at various times
+ * when there is data ready to be sent.
  */
-void
+static void
 pppasyncstart(struct ppp_softc *sc)
 {
     struct tty *tp = (struct tty *) sc->sc_devp;
@@ -492,11 +542,11 @@ pppasyncstart(struct ppp_softc *sc)
     u_char *start, *stop, *cp;
     int n, ndone, done, idle;
     struct mbuf *m2;
-    int s;
 
-    KERNEL_LOCK();
+    ttylock(tp);
+
     idle = 0;
-    while (CCOUNT(&tp->t_outq) < tp->t_hiwat) {
+    while (CCOUNT(&tp->t_outq) < PPP_HIWAT) {
 	/*
 	 * See if we have an existing packet partly sent.
 	 * If not, get a new packet and start sending it.
@@ -523,7 +573,7 @@ pppasyncstart(struct ppp_softc *sc)
 	    }
 
 	    /* Calculate the FCS for the first mbuf's worth. */
-	    sc->sc_outfcs = pppfcs(PPP_INITFCS, mtod(m, u_char *), m->m_len);
+	    sc->sc_outfcs = pppfcs(PPP_INITFCS, mtod(m, uint8_t *), m->m_len);
 	}
 
 	for (;;) {
@@ -555,17 +605,12 @@ pppasyncstart(struct ppp_softc *sc)
 		 * Put it out in a different form.
 		 */
 		if (len) {
-		    s = spltty();
-		    if (putc(PPP_ESCAPE, &tp->t_outq)) {
-			splx(s);
+		    if (putc(PPP_ESCAPE, &tp->t_outq))
 			break;
-		    }
 		    if (putc(*start ^ PPP_TRANS, &tp->t_outq)) {
 			(void) unputc(&tp->t_outq);
-			splx(s);
 			break;
 		    }
-		    splx(s);
 		    sc->sc_stats.ppp_obytes += 2;
 		    start++;
 		    len--;
@@ -606,7 +651,6 @@ pppasyncstart(struct ppp_softc *sc)
 		 * Try to output the FCS and flag.  If the bytes
 		 * don't all fit, back out.
 		 */
-		s = spltty();
 		for (q = endseq; q < p; ++q)
 		    if (putc(*q, &tp->t_outq)) {
 			done = 0;
@@ -614,7 +658,6 @@ pppasyncstart(struct ppp_softc *sc)
 			    unputc(&tp->t_outq);
 			break;
 		    }
-		splx(s);
 		if (done)
 		    sc->sc_stats.ppp_obytes += q - endseq;
 	    }
@@ -627,13 +670,12 @@ pppasyncstart(struct ppp_softc *sc)
 	    }
 
 	    /* Finished with this mbuf; free it and move on. */
-	    m2 = m_free(m);
-	    m = m2;
+	    m = m2 = m_free(m);
 	    if (m == NULL) {
 		/* Finished a packet */
 		break;
 	    }
-	    sc->sc_outfcs = pppfcs(sc->sc_outfcs, mtod(m, u_char *), m->m_len);
+	    sc->sc_outfcs = pppfcs(sc->sc_outfcs, mtod(m, uint8_t *), m->m_len);
 	}
 
 	/*
@@ -647,8 +689,7 @@ pppasyncstart(struct ppp_softc *sc)
     }
 
     /* Call pppstart to start output again if necessary. */
-    s = spltty();
-    pppstart_internal(tp, 0);
+    pppstart(tp);
 
     /*
      * This timeout is needed for operation on a pseudo-tty,
@@ -656,41 +697,38 @@ pppasyncstart(struct ppp_softc *sc)
      * drained the t_outq.
      */
     if (!idle && (sc->sc_flags & SC_TIMEOUT) == 0) {
-	timeout_add(&sc->sc_timo, 1);
+	callout_reset(&sc->sc_timo_ch, 1, ppp_timeout, sc);
 	sc->sc_flags |= SC_TIMEOUT;
     }
 
-    splx(s);
-    KERNEL_UNLOCK();
+    ttyunlock(tp);
 }
 
 /*
  * This gets called when a received packet is placed on
- * the inq.
+ * the inq, at splsoftnet.
  */
-void
+static void
 pppasyncctlp(struct ppp_softc *sc)
 {
     struct tty *tp;
-    int s;
 
-    KERNEL_LOCK();
-    /* Put a placeholder byte in canq for ttpoll()/ttnread(). */
-    s = spltty();
+    /* Put a placeholder byte in canq for ttselect()/ttnread(). */
     tp = (struct tty *) sc->sc_devp;
+    ttylock(tp);
     putc(0, &tp->t_canq);
     ttwakeup(tp);
-    splx(s);
-    KERNEL_UNLOCK();
+    ttyunlock(tp);
 }
 
 /*
  * Start output on async tty interface.  If the transmit queue
  * has drained sufficiently, arrange for pppasyncstart to be
- * called later.
+ * called later at splsoftnet.
+ * Called at spltty or higher.
  */
-int
-pppstart_internal(struct tty *tp, int force)
+static int
+pppstart(struct tty *tp)
 {
     struct ppp_softc *sc = (struct ppp_softc *) tp->t_sc;
 
@@ -706,8 +744,19 @@ pppstart_internal(struct tty *tp, int force)
      * or been disconnected from the ppp unit, then tell if_ppp.c that
      * we need more output.
      */
-    if ((CCOUNT(&tp->t_outq) < tp->t_lowat || force)
-	&& !((tp->t_state & TS_CARR_ON) == 0 && (tp->t_cflag & CLOCAL) == 0)
+    if ((CCOUNT(&tp->t_outq) >= PPP_LOWAT)
+	&& ((sc == NULL) || (sc->sc_flags & SC_TIMEOUT)))
+	return 0;
+#ifdef ALTQ
+    /*
+     * if ALTQ is enabled, don't invoke NETISR_PPP.
+     * pppintr() could loop without doing anything useful
+     * under rate-limiting.
+     */
+    if (ALTQ_IS_ENABLED(&sc->sc_if.if_snd))
+	return 0;
+#endif
+    if (!((tp->t_state & TS_CARR_ON) == 0 && (tp->t_cflag & CLOCAL) == 0)
 	&& sc != NULL && tp == (struct tty *) sc->sc_devp) {
 	ppp_restart(sc);
     }
@@ -715,82 +764,59 @@ pppstart_internal(struct tty *tp, int force)
     return 0;
 }
 
-int
-pppstart(struct tty *tp)
-{
-	return pppstart_internal(tp, 0);
-}
-
 /*
  * Timeout routine - try to start some more output.
  */
-void
+static void
 ppp_timeout(void *x)
 {
     struct ppp_softc *sc = (struct ppp_softc *) x;
     struct tty *tp = (struct tty *) sc->sc_devp;
-    int s;
 
-    s = spltty();
+    ttylock(tp);
     sc->sc_flags &= ~SC_TIMEOUT;
-    pppstart_internal(tp, 1);
-    splx(s);
+    pppstart(tp);
+    ttyunlock(tp);
 }
 
 /*
  * Allocate enough mbuf to handle current MRU.
  */
-void
-ppppkt(struct ppp_softc *sc)
+static void
+pppgetm(struct ppp_softc *sc)
 {
-    struct ppp_pkt **pktp, *pkt;
+    struct mbuf *m, **mp;
     int len;
-    int s;
 
-    s = spltty();
-    pktp = &sc->sc_pkt;
-    for (len = PKT_MAXLEN(sc); len > 0; len -= sizeof(pkt->p_buf)) {
-	pkt = *pktp;
-	if (pkt == NULL) {
-	    pkt = pool_get(&ppp_pkts, PR_NOWAIT);
-	    if (pkt == NULL)
+    mp = &sc->sc_m;
+    for (len = sc->sc_mru + PPP_HDRLEN + PPP_FCSLEN; len > 0; ){
+	if ((m = *mp) == NULL) {
+	    MGETHDR(m, M_DONTWAIT, MT_DATA);
+	    if (m == NULL)
 		break;
-	    PKT_NEXT(pkt) = NULL;
-	    PKT_PREV(pkt) = *pktp;
-	    PKT_LEN(pkt) = 0;
-	    *pktp = pkt;
+	    *mp = m;
+	    MCLGET(m, M_DONTWAIT);
 	}
-	pktp = &PKT_NEXT(pkt);
+	len -= M_BUFSIZE(m);
+	mp = &m->m_next;
     }
-    splx(s);
-}
-
-void
-ppp_pkt_free(struct ppp_pkt *pkt)
-{
-	struct ppp_pkt *next;
-
-	while (pkt != NULL) {
-		next = PKT_NEXT(pkt);
-		pool_put(&ppp_pkts, pkt);
-		pkt = next;
-	}
 }
 
 /*
  * tty interface receiver interrupt.
  */
-static unsigned int paritytab[8] = {
+static const unsigned paritytab[8] = {
     0x96696996, 0x69969669, 0x69969669, 0x96696996,
     0x69969669, 0x96696996, 0x96696996, 0x69969669
 };
 
-int
+static int
 pppinput(int c, struct tty *tp)
 {
     struct ppp_softc *sc;
-    struct ppp_pkt *pkt;
+    struct mbuf *m;
     int ilen, s;
+    int result;
 
     sc = (struct ppp_softc *) tp->t_sc;
     if (sc == NULL || tp != (struct tty *) sc->sc_devp)
@@ -811,41 +837,31 @@ pppinput(int c, struct tty *tp)
     /*
      * Handle software flow control of output.
      */
-    if (tp->t_iflag & IXON) {
-	if (c == tp->t_cc[VSTOP] && tp->t_cc[VSTOP] != _POSIX_VDISABLE) {
-	    if ((tp->t_state & TS_TTSTOP) == 0) {
-		tp->t_state |= TS_TTSTOP;
-		(*cdevsw[major(tp->t_dev)].d_stop)(tp, 0);
-	    }
+    result = tty_try_xonxoff(tp, c);
+    if (result == 0) {
+	    /* Character was recognized and consumed. */
 	    return 0;
-	}
-	if (c == tp->t_cc[VSTART] && tp->t_cc[VSTART] != _POSIX_VDISABLE) {
-	    tp->t_state &= ~TS_TTSTOP;
-	    if (tp->t_oproc != NULL)
-		(*tp->t_oproc)(tp);
-	    return 0;
-	}
     }
+    /* Character wasn't consumed, continue processing it. */
 
     s = spltty();
     if (c & 0x80)
 	sc->sc_flags |= SC_RCV_B7_1;
     else
 	sc->sc_flags |= SC_RCV_B7_0;
-    if (paritytab[c >> 5] & (1 << (c & 0x1F)))
+    if (paritytab[c >> 5] & (1U << (c & 0x1F)))
 	sc->sc_flags |= SC_RCV_ODDP;
     else
 	sc->sc_flags |= SC_RCV_EVNP;
     splx(s);
 
-    if (sc->sc_flags & SC_LOG_RAWIN)
-	ppplogchar(sc, c);
+    ppplogchar(sc, c);
 
     if (c == PPP_FLAG) {
 	ilen = sc->sc_ilen;
 	sc->sc_ilen = 0;
 
-	if (sc->sc_rawin_count > 0)
+	if ((sc->sc_flags & SC_LOG_RAWIN) && sc->sc_rawin.count > 0)
 	    ppplogchar(sc, -1);
 
 	/*
@@ -860,7 +876,7 @@ pppinput(int c, struct tty *tp)
 		if (sc->sc_flags & SC_DEBUG)
 		    printf("%s: bad fcs %x\n", sc->sc_if.if_xname,
 			sc->sc_fcs);
-		sc->sc_if.if_ierrors++;
+		if_statinc(&sc->sc_if, if_ierrors);
 		sc->sc_stats.ppp_ierrors++;
 	    } else
 		sc->sc_flags &= ~(SC_FLUSH | SC_ESCAPED);
@@ -873,7 +889,7 @@ pppinput(int c, struct tty *tp)
 		if (sc->sc_flags & SC_DEBUG)
 		    printf("%s: too short (%d)\n", sc->sc_if.if_xname, ilen);
 		s = spltty();
-		sc->sc_if.if_ierrors++;
+		if_statinc(&sc->sc_if, if_ierrors);
 		sc->sc_stats.ppp_ierrors++;
 		sc->sc_flags |= SC_PKTLOST;
 		splx(s);
@@ -882,29 +898,29 @@ pppinput(int c, struct tty *tp)
 	}
 
 	/*
-	 * Remove FCS trailer.
+	 * Remove FCS trailer.  Somewhat painful...
 	 */
 	ilen -= 2;
-	pkt = sc->sc_pktc;
-	if (--PKT_LEN(pkt) == 0) {
-            pkt = PKT_PREV(pkt);
-	    sc->sc_pktc = pkt;
+	if (--sc->sc_mc->m_len == 0) {
+	    for (m = sc->sc_m; m->m_next != sc->sc_mc; m = m->m_next)
+		;
+	    sc->sc_mc = m;
 	}
-	PKT_LEN(pkt)--;
+	sc->sc_mc->m_len--;
 
 	/* excise this mbuf chain */
-	pkt = sc->sc_pkt;
-	sc->sc_pkt = sc->sc_pktc = PKT_NEXT(sc->sc_pktc);
-	PKT_NEXT(pkt) = NULL;
+	m = sc->sc_m;
+	sc->sc_m = sc->sc_mc->m_next;
+	sc->sc_mc->m_next = NULL;
 
-	ppppktin(sc, pkt, sc->sc_flags & SC_PKTLOST);
+	ppppktin(sc, m, sc->sc_flags & SC_PKTLOST);
 	if (sc->sc_flags & SC_PKTLOST) {
 	    s = spltty();
 	    sc->sc_flags &= ~SC_PKTLOST;
 	    splx(s);
 	}
 
-	ppppkt(sc);
+	pppgetm(sc);
 	return 0;
     }
 
@@ -914,7 +930,7 @@ pppinput(int c, struct tty *tp)
 	return 0;
     }
 
-    if (c < 0x20 && (sc->sc_rasyncmap & (1 << c)))
+    if (c < 0x20 && (sc->sc_rasyncmap & (1U << c)))
 	return 0;
 
     s = spltty();
@@ -939,30 +955,31 @@ pppinput(int c, struct tty *tp)
      */
     if (sc->sc_ilen == 0) {
 	/* reset the first input mbuf */
-	if (sc->sc_pkt == NULL) {
-	    ppppkt(sc);
-	    if (sc->sc_pkt == NULL) {
+	if (sc->sc_m == NULL) {
+	    pppgetm(sc);
+	    if (sc->sc_m == NULL) {
 		if (sc->sc_flags & SC_DEBUG)
 		    printf("%s: no input mbufs!\n", sc->sc_if.if_xname);
 		goto flush;
 	    }
 	}
-	pkt = sc->sc_pkt;
-	PKT_LEN(pkt) = 0;
-	sc->sc_pktc = pkt;
-	sc->sc_pktp = pkt->p_buf;
+	m = sc->sc_m;
+	m->m_len = 0;
+	MRESETDATA(m);
+	sc->sc_mc = m;
+	sc->sc_mp = mtod(m, char *);
 	sc->sc_fcs = PPP_INITFCS;
 	if (c != PPP_ALLSTATIONS) {
 	    if (sc->sc_flags & SC_REJ_COMP_AC) {
 		if (sc->sc_flags & SC_DEBUG)
 		    printf("%s: garbage received: 0x%x (need 0xFF)\n",
-			sc->sc_if.if_xname, c);
+		    sc->sc_if.if_xname, c);
 		goto flush;
 	    }
-	    *sc->sc_pktp++ = PPP_ALLSTATIONS;
-	    *sc->sc_pktp++ = PPP_UI;
+	    *sc->sc_mp++ = PPP_ALLSTATIONS;
+	    *sc->sc_mp++ = PPP_UI;
 	    sc->sc_ilen += 2;
-	    PKT_LEN(pkt) += 2;
+	    m->m_len += 2;
 	}
     }
     if (sc->sc_ilen == 1 && c != PPP_UI) {
@@ -973,49 +990,50 @@ pppinput(int c, struct tty *tp)
     }
     if (sc->sc_ilen == 2 && (c & 1) == 1) {
 	/* a compressed protocol */
-	*sc->sc_pktp++ = 0;
+	*sc->sc_mp++ = 0;
 	sc->sc_ilen++;
-	PKT_LEN(sc->sc_pktc)++;
+	sc->sc_mc->m_len++;
     }
     if (sc->sc_ilen == 3 && (c & 1) == 0) {
 	if (sc->sc_flags & SC_DEBUG)
 	    printf("%s: bad protocol %x\n", sc->sc_if.if_xname,
-		(sc->sc_pktp[-1] << 8) + c);
+		(sc->sc_mp[-1] << 8) + c);
 	goto flush;
     }
 
     /* packet beyond configured mru? */
-    if (++sc->sc_ilen > PKT_MAXLEN(sc)) {
+    if (++sc->sc_ilen > sc->sc_mru + PPP_HDRLEN + PPP_FCSLEN) {
 	if (sc->sc_flags & SC_DEBUG)
 	    printf("%s: packet too big\n", sc->sc_if.if_xname);
 	goto flush;
     }
 
-    /* is this packet full? */
-    pkt = sc->sc_pktc;
-    if (PKT_LEN(pkt) >= sizeof(pkt->p_buf)) {
-	if (PKT_NEXT(pkt) == NULL) {
-	    ppppkt(sc);
-	    if (PKT_NEXT(pkt) == NULL) {
+    /* is this mbuf full? */
+    m = sc->sc_mc;
+    if (M_TRAILINGSPACE(m) <= 0) {
+	if (m->m_next == NULL) {
+	    pppgetm(sc);
+	    if (m->m_next == NULL) {
 		if (sc->sc_flags & SC_DEBUG)
-		    printf("%s: too few input packets!\n", sc->sc_if.if_xname);
+		    printf("%s: too few input mbufs!\n", sc->sc_if.if_xname);
 		goto flush;
 	    }
 	}
-	sc->sc_pktc = pkt = PKT_NEXT(pkt);
-	PKT_LEN(pkt) = 0;
-	sc->sc_pktp = pkt->p_buf;
+	sc->sc_mc = m = m->m_next;
+	m->m_len = 0;
+	MRESETDATA(m);
+	sc->sc_mp = mtod(m, char *);
     }
 
-    ++PKT_LEN(pkt);
-    *sc->sc_pktp++ = c;
+    ++m->m_len;
+    *sc->sc_mp++ = c;
     sc->sc_fcs = PPP_FCS(sc->sc_fcs, c);
     return 0;
 
  flush:
     if (!(sc->sc_flags & SC_FLUSH)) {
 	s = spltty();
-	sc->sc_if.if_ierrors++;
+	if_statinc(&sc->sc_if, if_ierrors);
 	sc->sc_stats.ppp_ierrors++;
 	sc->sc_flags |= SC_FLUSH;
 	splx(s);
@@ -1027,38 +1045,42 @@ pppinput(int c, struct tty *tp)
 
 #define MAX_DUMP_BYTES	128
 
-void
+static void
 ppplogchar(struct ppp_softc *sc, int c)
 {
-    if (c >= 0)
-	sc->sc_rawin[sc->sc_rawin_count++] = c;
-    if (sc->sc_rawin_count >= sizeof(sc->sc_rawin)
-	|| (c < 0 && sc->sc_rawin_count > 0)) {
-	printf("%s input: ", sc->sc_if.if_xname);
-	pppdumpb(sc->sc_rawin, sc->sc_rawin_count);
-	sc->sc_rawin_count = 0;
+    if (c >= 0) {
+	sc->sc_rawin.buf[sc->sc_rawin_start++] = c;
+	if (sc->sc_rawin.count < sizeof(sc->sc_rawin.buf))
+	    sc->sc_rawin.count++;
+    }
+    if (sc->sc_rawin_start >= sizeof(sc->sc_rawin.buf)
+	|| (c < 0 && sc->sc_rawin_start > 0)) {
+	if (sc->sc_flags & (SC_LOG_FLUSH|SC_LOG_RAWIN)) {
+	    printf("%s input: ", sc->sc_if.if_xname);
+	    pppdumpb(sc->sc_rawin.buf, sc->sc_rawin_start);
+	}
+	if (c < 0)
+	    sc->sc_rawin.count = 0;
+	sc->sc_rawin_start = 0;
     }
 }
 
-void
+static void
 pppdumpb(u_char *b, int l)
 {
-    char buf[3*MAX_DUMP_BYTES+4];
-    char *bp = buf;
-    static char digits[] = "0123456789abcdef";
+    char bf[3*MAX_DUMP_BYTES+4];
+    char *bp = bf;
 
     while (l--) {
-	if (bp >= buf + sizeof(buf) - 3) {
+	if (bp >= bf + sizeof(bf) - 3) {
 	    *bp++ = '>';
 	    break;
 	}
-	*bp++ = digits[*b >> 4]; /* convert byte to ascii hex */
-	*bp++ = digits[*b++ & 0xf];
+	*bp++ = hexdigits[*b >> 4]; /* convert byte to ascii hex */
+	*bp++ = hexdigits[*b++ & 0xf];
 	*bp++ = ' ';
     }
 
     *bp = 0;
-    printf("%s\n", buf);
+    printf("%s\n", bf);
 }
-
-#endif	/* NPPP > 0 */

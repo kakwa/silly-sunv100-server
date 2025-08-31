@@ -1,8 +1,7 @@
-/* $NetBSD: loadfile.c,v 1.10 2000/12/03 02:53:04 tsutsui Exp $ */
-/* $OpenBSD: loadfile.c,v 1.21 2021/10/24 17:49:19 deraadt Exp $ */
+/* $NetBSD: loadfile.c,v 1.33 2021/05/21 21:52:15 jmcneill Exp $ */
 
 /*-
- * Copyright (c) 1997 The NetBSD Foundation, Inc.
+ * Copyright (c) 1997, 2008 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
@@ -66,8 +65,8 @@
  */
 
 #ifdef _STANDALONE
-#include <lib/libkern/libkern.h>
 #include <lib/libsa/stand.h>
+#include <lib/libkern/libkern.h>
 #else
 #include <stdio.h>
 #include <string.h>
@@ -83,75 +82,116 @@
 
 #include "loadfile.h"
 
-#ifdef BOOT_ELF
-#include <sys/exec_elf.h>
-#if defined(BOOT_ELF32) && defined(BOOT_ELF64)
-/*
- * Both defined, so elf32_exec() and elf64_exec() need to be separately
- * created (can't do it by including loadfile_elf.c here).
- */
-int elf32_exec(int, Elf32_Ehdr *, uint64_t *, int);
-int elf64_exec(int, Elf64_Ehdr *, uint64_t *, int);
-#else
-#include "loadfile_elf.c"
-#endif
-#endif
+uint32_t	netbsd_version;
+u_int		netbsd_elf_class;
+u_int		netbsd_elf_data;
 
 /*
- * Open 'filename', read in program and return -1 on error otherwise fd,
- * with file still open.
- * Also fills in marks.
+ * Open 'filename', read in program and return the opened file
+ * descriptor if ok, or -1 on error.
+ * Fill in marks
  */
 int
-loadfile(const char *fname, uint64_t *marks, int flags)
+loadfile(const char *fname, u_long *marks, int flags)
 {
-	union {
-#if defined(BOOT_ELF32) || (defined(BOOT_ELF) && ELFSIZE == 32)
-		Elf32_Ehdr elf32;
-#endif
-#if defined(BOOT_ELF64) || (defined(BOOT_ELF) && ELFSIZE == 64)
-		Elf64_Ehdr elf64;
-#endif
-
-	} hdr;
-	ssize_t nr;
-	int fd, rval;
+	int fd, error;
 
 	/* Open the file. */
-	if ((fd = open(fname, O_RDONLY)) < 0) {
+	if ((fd = open(fname, 0)) < 0) {
 		WARN(("open %s", fname ? fname : "<default>"));
 		return -1;
 	}
 
+	/* Load it; save the value of errno across the close() call */
+	if ((error = fdloadfile(fd, marks, flags)) != 0) {
+		(void)close(fd);
+		errno = error;
+		return -1;
+	}
+
+	return fd;
+}
+
+/*
+ * Read in program from the given file descriptor.
+ * Return error code (0 on success).
+ * Fill in marks.
+ */
+int
+fdloadfile(int fd, u_long *marks, int flags)
+{
+	union {
+#ifdef BOOT_ECOFF
+		struct ecoff_exechdr coff;
+#endif
+#ifdef BOOT_ELF32
+		Elf32_Ehdr elf32;
+#endif
+#ifdef BOOT_ELF64
+		Elf64_Ehdr elf64;
+#endif
+#ifdef BOOT_AOUT
+		struct exec aout;
+#endif
+	} hdr;
+	ssize_t nr;
+	int rval;
+
 	/* Read the exec header. */
-	if ((nr = read(fd, &hdr, sizeof(hdr))) != sizeof(hdr)) {
-		WARN(("read header"));
+	if (lseek(fd, 0, SEEK_SET) == (off_t)-1)
+		goto err;
+	nr = read(fd, &hdr, sizeof(hdr));
+	if (nr == -1) {
+		WARN(("read header failed"));
+		goto err;
+	}
+	if (nr != sizeof(hdr)) {
+		WARN(("read header short"));
+		errno = EFTYPE;
 		goto err;
 	}
 
-#if defined(BOOT_ELF32) || (defined(BOOT_ELF) && ELFSIZE == 32)
-	if (memcmp(hdr.elf32.e_ident, ELFMAG, SELFMAG) == 0 &&
-	    hdr.elf32.e_ident[EI_CLASS] == ELFCLASS32) {
-		rval = elf32_exec(fd, &hdr.elf32, marks, flags);
+#ifdef BOOT_ECOFF
+	if (!ECOFF_BADMAG(&hdr.coff)) {
+		rval = loadfile_coff(fd, &hdr.coff, marks, flags);
 	} else
 #endif
-#if defined(BOOT_ELF64) || (defined(BOOT_ELF) && ELFSIZE == 64)
+#ifdef BOOT_ELF32
+	if (memcmp(hdr.elf32.e_ident, ELFMAG, SELFMAG) == 0 &&
+	    hdr.elf32.e_ident[EI_CLASS] == ELFCLASS32) {
+	    	netbsd_elf_class = ELFCLASS32;
+		netbsd_elf_data = hdr.elf32.e_ident[EI_DATA];
+		rval = loadfile_elf32(fd, &hdr.elf32, marks, flags);
+	} else
+#endif
+#ifdef BOOT_ELF64
 	if (memcmp(hdr.elf64.e_ident, ELFMAG, SELFMAG) == 0 &&
 	    hdr.elf64.e_ident[EI_CLASS] == ELFCLASS64) {
-		rval = elf64_exec(fd, &hdr.elf64, marks, flags);
+	    	netbsd_elf_class = ELFCLASS64;
+		netbsd_elf_data = hdr.elf64.e_ident[EI_DATA];
+		rval = loadfile_elf64(fd, &hdr.elf64, marks, flags);
+	} else
+#endif
+#ifdef BOOT_AOUT
+	if (OKMAGIC(N_GETMAGIC(hdr.aout))
+#ifndef NO_MID_CHECK
+	    && N_GETMID(hdr.aout) == MID_MACHINE
+#endif
+	    ) {
+		rval = loadfile_aout(fd, &hdr.aout, marks, flags);
 	} else
 #endif
 	{
 		rval = 1;
 		errno = EFTYPE;
-		WARN(("%s", fname ? fname : "<default>"));
 	}
 
 	if (rval == 0) {
-		PROGRESS(("=0x%lx\n", marks[MARK_END] - marks[MARK_START]));
-		return fd;
+		if ((flags & LOAD_ALL) != 0)
+			PROGRESS(("=0x%lx\n",
+				  marks[MARK_END] - marks[MARK_START]));
+		return 0;
 	}
 err:
-	(void)close(fd);
-	return -1;
+	return errno;
 }

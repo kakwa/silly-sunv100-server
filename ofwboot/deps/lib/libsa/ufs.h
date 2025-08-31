@@ -1,5 +1,4 @@
-/*	$OpenBSD: ufs.h,v 1.7 2019/08/03 15:22:17 deraadt Exp $	*/
-/*	$NetBSD: ufs.h,v 1.5 1995/10/20 01:35:25 cgd Exp $	*/
+/*	$NetBSD: ufs.h,v 1.11 2021/05/27 06:54:44 mrg Exp $	*/
 
 /*-
  * Copyright (c) 1993
@@ -32,14 +31,14 @@
  *	@(#)ufs.h	8.1 (Berkeley) 6/11/93
  */
 
-int	ufs_open(char *path, struct open_file *f);
-int	ufs_close(struct open_file *f);
-int	ufs_read(struct open_file *f, void *buf,
-		size_t size, size_t *resid);
-int	ufs_write(struct open_file *f, void *buf,
-		size_t size, size_t *resid);
-off_t	ufs_seek(struct open_file *f, off_t offset, int where);
-int	ufs_stat(struct open_file *f, struct stat *sb);
-int	ufs_readdir(struct open_file *f, char *name);
-int	ufs_fchmod(struct open_file *f, mode_t mode);
+FS_DEF(ufs);
+FS_DEF(ffsv1);
+FS_DEF(ffsv2);
 
+/* in libsa's ffs_bswap.c */
+struct fs;
+struct ufs1_dinode;
+struct ufs2_dinode;
+void ffs_sb_swap(const struct fs *, struct fs *);
+void ffs_dinode1_swap(struct ufs1_dinode *, struct ufs1_dinode *);
+void ffs_dinode2_swap(struct ufs2_dinode *, struct ufs2_dinode *);

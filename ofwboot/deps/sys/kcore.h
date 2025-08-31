@@ -1,5 +1,4 @@
-/*	$OpenBSD: kcore.h,v 1.2 2023/01/04 10:59:34 jsg Exp $	*/
-/*	$NetBSD: kcore.h,v 1.1 1996/03/10 21:56:00 leo Exp $	*/
+/*	$NetBSD: kcore.h,v 1.4 2011/01/18 08:17:39 matt Exp $	*/
 
 /*
  * Copyright (c) 1996 Leo Weppelman.
@@ -40,21 +39,21 @@
  * Description of a memory segment. To make this suitable for sharing
  * between all architectures, u_quad_t seems to be the necessary type...
  */
-typedef struct {
+typedef struct phys_ram_seg {
 	u_quad_t	start;		/* Physical start address	*/
 	u_quad_t	size;		/* Size in bytes		*/
 } phys_ram_seg_t;
 
 typedef struct kcore_hdr {
-	u_int32_t	c_midmag;	/* Magic, id, flags		*/
-	u_int16_t	c_hdrsize;	/* Aligned header size		*/
-	u_int16_t	c_seghdrsize;	/* Aligned seg-header size	*/
-	u_int32_t	c_nseg;		/* Number of segments		*/
+	uint32_t	c_midmag;	/* Magic, id, flags		*/
+	uint16_t	c_hdrsize;	/* Aligned header size		*/
+	uint16_t	c_seghdrsize;	/* Aligned seg-header size	*/
+	uint32_t	c_nseg;		/* Number of segments		*/
 } kcore_hdr_t;
 
 typedef struct kcore_seg {
-	u_int32_t	c_midmag;	/* Magic, id, flags		*/
-	u_int32_t	c_size;		/* Sizeof this segment		*/
+	uint32_t	c_midmag;	/* Magic, id, flags		*/
+	uint32_t	c_size;		/* Sizeof this segment		*/
 } kcore_seg_t;
 
 #endif /* _SYS_KCORE_H_ */

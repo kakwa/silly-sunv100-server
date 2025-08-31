@@ -1,5 +1,4 @@
-/*	$OpenBSD: acct.h,v 1.16 2024/02/25 00:07:13 deraadt Exp $	*/
-/*	$NetBSD: acct.h,v 1.16 1995/03/26 20:23:52 jtc Exp $	*/
+/*	$NetBSD: acct.h,v 1.28 2021/09/14 17:10:46 christos Exp $	*/
 
 /*-
  * Copyright (c) 1990, 1993, 1994
@@ -37,39 +36,43 @@
  *	@(#)acct.h	8.3 (Berkeley) 7/10/94
  */
 
-#include <sys/syslimits.h>
+#ifndef _SYS_ACCT_H_
+#define _SYS_ACCT_H_
 
 /*
  * Accounting structures; these use a comp_t type which is a 3 bits base 8
  * exponent, 13 bit fraction ``floating point'' number.  Units are 1/AHZ
  * seconds.
  */
-typedef u_int16_t comp_t;
+typedef uint16_t comp_t;
 
 struct acct {
-	char	  ac_comm[_MAXCOMLEN];	/* command name, incl NUL */
-	comp_t	  ac_utime;		/* user time */
-	comp_t	  ac_stime;		/* system time */
-	comp_t	  ac_etime;		/* elapsed time */
-	comp_t	  ac_io;		/* count of IO blocks */
-	time_t	  ac_btime;		/* starting time */
-	uid_t	  ac_uid;		/* user id */
-	gid_t	  ac_gid;		/* group id */
-	u_int32_t ac_mem;		/* average memory usage */
-	dev_t	  ac_tty;		/* controlling tty, or -1 */
-	pid_t	  ac_pid;		/* process id */
+	char	  ac_comm[16];	/* command name */
+	comp_t	  ac_utime;	/* user time */
+	comp_t	  ac_stime;	/* system time */
+	comp_t	  ac_etime;	/* elapsed time */
+	time_t	  ac_btime;	/* starting time */
+	uid_t	  ac_uid;	/* user id */
+	gid_t	  ac_gid;	/* group id */
+	uint16_t  ac_mem;	/* average memory usage */
+	comp_t	  ac_io;	/* count of IO blocks */
+	dev_t	  ac_tty;	/* controlling tty */
 
-	u_int32_t ac_flag;		/* accounting flags */
-#define	AFORK	0x00000001	/* fork'd but not exec'd */
-#define	AMAP	0x00000004	/* killed by syscall or stack mapping violation */
-#define	ACORE	0x00000008	/* dumped core */
-#define	AXSIG	0x00000010	/* killed by a signal */
-#define	APLEDGE	0x00000020	/* killed due to pledge violation */
-#define	ATRAP	0x00000040	/* memory access violation */
-#define	AUNVEIL	0x00000080	/* unveil access violation */
-#define	APINSYS	0x00000200	/* killed by syscall pin violation */
-#define	ABTCFI	0x00000400	/* BT CFI violation */
+#define	AFORK	0x01		/* fork'd but not exec'd */
+#define	ASU	0x02		/* used super-user permissions */
+#define	ACOMPAT	0x04		/* used compatibility mode */
+#define	ACORE	0x08		/* dumped core */
+#define	AXSIG	0x10		/* killed by a signal */
+	uint8_t   ac_flag;	/* accounting flags */
 };
+
+#define	__ACCT_FLAG_BITS \
+	"\020" \
+	"\1FORK" \
+	"\2SU" \
+	"\3COMPAT" \
+	"\4CORE" \
+	"\5XSIG"
 
 /*
  * 1/AHZ is the granularity of the data encoded in the comp_t fields.
@@ -78,6 +81,8 @@ struct acct {
 #define	AHZ	64
 
 #ifdef _KERNEL
-int	acct_process(struct proc *p);
-void	acct_shutdown(void);
+void	acct_init(void);
+int	acct_process(struct lwp *);
 #endif
+
+#endif /* !_SYS_ACCT_H_ */

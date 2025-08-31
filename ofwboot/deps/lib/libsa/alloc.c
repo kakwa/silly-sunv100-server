@@ -1,10 +1,6 @@
-/*	$OpenBSD: alloc.c,v 1.13 2018/12/16 08:31:50 otto Exp $	*/
-/*	$NetBSD: alloc.c,v 1.6 1997/02/04 18:36:33 thorpej Exp $	*/
+/*	$NetBSD: alloc.c,v 1.28 2019/03/31 20:08:45 christos Exp $	*/
 
 /*
- * Copyright (c) 1997 Christopher G. Demetriou.  All rights reserved.
- * Copyright (c) 1996
- *	Matthias Drochner.  All rights reserved.
  * Copyright (c) 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -20,6 +16,44 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  * 3. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ *	@(#)alloc.c	8.1 (Berkeley) 6/11/93
+ *
+ *
+ * Copyright (c) 1997 Christopher G. Demetriou.  All rights reserved.
+ * Copyright (c) 1996
+ *	Matthias Drochner.  All rights reserved.
+ *
+ * This code is derived from software contributed to Berkeley by
+ * The Mach Operating System project at Carnegie-Mellon University.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *	This product includes software developed by the University of
+ *	California, Berkeley and its contributors.
+ * 4. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -69,94 +103,75 @@
  *
  * Compile options:
  *
- *	ALLOC_TRACE	enable tracing of allocations/deallocations
- *
- *	ALLOC_FIRST_FIT	use a first-fit allocation algorithm, rather than
- *			the default best-fit algorithm.
- *
  *	HEAP_LIMIT	heap limit address (defaults to "no limit").
  *
  *	HEAP_START	start address of heap (defaults to '&end').
- *
- *	NEEDS_HEAP_H	needs to #include "heap.h" to declare things
- *			needed by HEAP_LIMIT and/or HEAP_START.
- *
- *	NEEDS_HEAP_INIT	needs to invoke heap_init() to initialize
- *			heap boundaries.
  *
  *	DEBUG		enable debugging sanity checks.
  */
 
 #include <sys/param.h>
+#include "stand.h"
 
 /*
- * Each block actually has ALIGN(unsigned) + ALIGN(size) bytes allocated
+ * Each block actually has ALIGN(unsigned int) + ALIGN(size) bytes allocated
  * to it, as follows:
  *
- * 0 ... (sizeof(unsigned) - 1)
+ * 0 ... (sizeof(unsigned int) - 1)
  *	allocated or unallocated: holds size of user-data part of block.
  *
- * sizeof(unsigned) ... (ALIGN(sizeof(unsigned)) - 1)
+ * sizeof(unsigned int) ... (ALIGN(sizeof(unsigned int)) - 1)
  *	allocated: unused
  *	unallocated: depends on packing of struct fl
  *
- * ALIGN(sizeof(unsigned)) ... (ALIGN(sizeof(unsigned)) + ALIGN(data size) - 1)
+ * ALIGN(sizeof(unsigned int)) ...
+ *     (ALIGN(sizeof(unsigned int)) + ALIGN(data size) - 1)
  *	allocated: user data
  *	unallocated: depends on packing of struct fl
  *
  * 'next' is only used when the block is unallocated (i.e. on the free list).
- * However, note that ALIGN(sizeof(unsigned)) + ALIGN(data size) must
+ * However, note that ALIGN(sizeof(unsigned int)) + ALIGN(data size) must
  * be at least 'sizeof(struct fl)', so that blocks can be used as structures
  * when on the free list.
+ *
+ * When HEAP_LIMIT is defined and the heap limit is reached, alloc() panics.
+ * Otherwise, it never fails.
  */
-
-#include "stand.h"
-
 struct fl {
-	unsigned	size;
+	unsigned int	size;
 	struct fl	*next;
-} *freelist = NULL;
+} *freelist;
 
-#ifdef NEEDS_HEAP_H
-#include "heap.h"
-#endif
-#ifndef NEEDS_HEAP_INIT
-#ifdef HEAP_START
-static char *top = (char *)HEAP_START;
-#else
+#ifdef HEAP_VARIABLE
+static char *top, *heapstart, *heaplimit;
+void
+setheap(void *start, void *limit)
+{
+	heapstart = top = start;
+	heaplimit = limit;
+}
+#define HEAP_START heapstart
+#define HEAP_LIMIT heaplimit
+#else /* !HEAP_VARIABLE */
+#ifndef HEAP_START
 extern char end[];
-static char *top = end;
+#define HEAP_START end
 #endif
-#endif
+static char *top = (char *)HEAP_START;
+#endif /* HEAP_VARIABLE */
 
-void *
-alloc(unsigned int size)
+__compactcall void *
+alloc(size_t size)
 {
 	struct fl **f = &freelist, **bestf = NULL;
-#ifndef ALLOC_FIRST_FIT
-	unsigned bestsize = 0xffffffff;	/* greater than any real size */
-#endif
+	unsigned int bestsize = 0xffffffff;	/* greater than any real size */
 	char *help;
 	int failed;
 
-#ifdef NEEDS_HEAP_INIT
-	heap_init();
-#endif
-
-#ifdef ALLOC_TRACE
-	printf("alloc(%u)", size);
-#endif
-
-#ifdef ALLOC_FIRST_FIT
-	while (*f != NULL && (*f)->size < size)
-		f = &((*f)->next);
-	bestf = f;
-	failed = (*bestf == NULL);
-#else
 	/* scan freelist */
 	while (*f) {
-		if ((*f)->size >= size) {
-			if ((*f)->size == size) /* exact match */
+		if ((size_t)(*f)->size >= size) {
+			if ((size_t)(*f)->size == size) /* exact match */
 				goto found;
 
 			if ((*f)->size < bestsize) {
@@ -169,8 +184,7 @@ alloc(unsigned int size)
 	}
 
 	/* no match in freelist if bestsize unchanged */
-	failed = (bestsize == 0xffffffff || bestsize >= size * 2);
-#endif
+	failed = (bestsize == 0xffffffff);
 
 	if (failed) { /* nothing found */
 		/*
@@ -182,61 +196,44 @@ alloc(unsigned int size)
 		/* make _sure_ the region can hold a struct fl. */
 		if (size < ALIGN(sizeof (struct fl *)))
 			size = ALIGN(sizeof (struct fl *));
-		top += ALIGN(sizeof(unsigned)) + ALIGN(size);
+		top += ALIGN(sizeof(unsigned int)) + ALIGN(size);
 #ifdef HEAP_LIMIT
 		if (top > (char *)HEAP_LIMIT)
-			panic("heap full (0x%lx+%u)", help, size);
+			panic("heap full (%p+%zu)", help, size);
 #endif
-		*(unsigned *)help = ALIGN(size);
-#ifdef ALLOC_TRACE
-		printf("=%p\n", help + ALIGN(sizeof(unsigned)));
-#endif
-		return(help + ALIGN(sizeof(unsigned)));
+		*(unsigned int *)(void *)help = (unsigned int)ALIGN(size);
+		return help + ALIGN(sizeof(unsigned int));
 	}
 
 	/* we take the best fit */
 	f = bestf;
 
-#ifndef ALLOC_FIRST_FIT
 found:
-#endif
 	/* remove from freelist */
-	help = (char *)*f;
+	help = (char *)(void *)*f;
 	*f = (*f)->next;
-#ifdef ALLOC_TRACE
-	printf("=%p (origsize %u)\n", help + ALIGN(sizeof(unsigned)),
-	    *(unsigned *)help);
-#endif
-	return(help + ALIGN(sizeof(unsigned)));
+	return help + ALIGN(sizeof(unsigned int));
 }
 
-void
-free(void *ptr, unsigned int size)
+__compactcall void
+/*ARGSUSED*/
+dealloc(void *ptr, size_t size)
 {
-	struct fl *f;
-
-	if (ptr == NULL)
-		return;
-
-	f = (struct fl *)((char *)ptr - ALIGN(sizeof(unsigned)));
-
-#ifdef ALLOC_TRACE
-	printf("free(%p, %u) (origsize %u)\n", ptr, size, f->size);
-#endif
+	struct fl *f =
+	    (struct fl *)(void *)((char *)(void *)ptr -
+	    ALIGN(sizeof(unsigned int)));
 #ifdef DEBUG
-	if (size > f->size)
-		printf("free %u bytes @%p, should be <=%u\n",
-		    size, ptr, f->size);
-#ifdef HEAP_START
+	if (size > (size_t)f->size) {
+		printf("%s: %zu bytes @%p, should be <=%u\n", __func__,
+			size, ptr, f->size);
+	}
+
 	if (ptr < (void *)HEAP_START)
-#else
-	if (ptr < (void *)end)
-#endif
-		printf("free: %lx before start of heap.\n", (u_long)ptr);
+		printf("%s: %p before start of heap.\n", __func__, ptr);
 
 #ifdef HEAP_LIMIT
 	if (ptr > (void *)HEAP_LIMIT)
-		printf("free: %lx beyond end of heap.\n", (u_long)ptr);
+		printf("%s: %p beyond end of heap.\n", __func__, ptr);
 #endif
 #endif /* DEBUG */
 	/* put into freelist */

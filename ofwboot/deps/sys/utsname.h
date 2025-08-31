@@ -1,5 +1,4 @@
-/*	$OpenBSD: utsname.h,v 1.6 2013/03/24 17:45:50 deraadt Exp $	*/
-/*	$NetBSD: utsname.h,v 1.6 1994/06/29 06:46:11 cgd Exp $	*/
+/*	$NetBSD: utsname.h,v 1.13 2005/12/11 12:25:21 christos Exp $	*/
 
 /*-
  * Copyright (c) 1994
@@ -35,25 +34,29 @@
  *	@(#)utsname.h	8.1 (Berkeley) 1/4/94
  */
 
-#ifndef	_SYS_UTSNAME_H
-#define	_SYS_UTSNAME_H
+#ifndef	_SYS_UTSNAME_H_
+#define	_SYS_UTSNAME_H_
 
-#define SYS_NMLN	256
+#include <sys/featuretest.h>
+
+#define	_SYS_NMLN	256
+
+#if defined(_NETBSD_SOURCE)
+#define	SYS_NMLN	_SYS_NMLN
+#endif
 
 struct utsname {
-	char	sysname[SYS_NMLN];	/* Name of this OS. */
-	char	nodename[SYS_NMLN];	/* Name of this network node. */
-	char	release[SYS_NMLN];	/* Release level. */
-	char	version[SYS_NMLN];	/* Version level. */
-	char	machine[SYS_NMLN];	/* Hardware type. */
+	char	sysname[_SYS_NMLN];	/* Name of this OS. */
+	char	nodename[_SYS_NMLN];	/* Name of this network node. */
+	char	release[_SYS_NMLN];	/* Release level. */
+	char	version[_SYS_NMLN];	/* Version level. */
+	char	machine[_SYS_NMLN];	/* Hardware type. */
 };
 
 #include <sys/cdefs.h>
 
-#ifndef _KERNEL
 __BEGIN_DECLS
 int	uname(struct utsname *);
 __END_DECLS
-#endif /* !_KERNEL */
 
-#endif	/* !_SYS_UTSNAME_H */
+#endif	/* !_SYS_UTSNAME_H_ */

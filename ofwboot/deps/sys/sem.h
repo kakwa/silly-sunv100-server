@@ -1,66 +1,68 @@
-/*	$OpenBSD: sem.h,v 1.26 2024/10/26 05:39:03 jsg Exp $	*/
-/*	$NetBSD: sem.h,v 1.8 1996/02/09 18:25:29 christos Exp $	*/
+/*	$NetBSD: sem.h,v 1.37 2025/05/09 10:22:55 martin Exp $	*/
+
+/*-
+ * Copyright (c) 1999 The NetBSD Foundation, Inc.
+ * All rights reserved.
+ *
+ * This code is derived from software contributed to The NetBSD Foundation
+ * by Jason R. Thorpe of the Numerical Aerospace Simulation Facility,
+ * NASA Ames Research Center.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
 
 /*
  * SVID compatible sem.h file
  *
- * Author:  Daniel Boulet
+ * Author: Daniel Boulet
  */
 
 #ifndef _SYS_SEM_H_
 #define _SYS_SEM_H_
 
-#ifndef _SYS_IPC_H_
+#include <sys/featuretest.h>
+
 #include <sys/ipc.h>
-#endif
 
-#if __BSD_VISIBLE
-
-/* sem-specific sysctl variables corresponding to members of struct seminfo */
-#define	KERN_SEMINFO_SEMMNI	1	/* int: # of semaphore identifiers */
-#define	KERN_SEMINFO_SEMMNS	2	/* int: # of semaphores in system */
-#define	KERN_SEMINFO_SEMMNU	3	/* int: # of undo structures in system */
-#define	KERN_SEMINFO_SEMMSL	4	/* int: max semaphores per id */
-#define	KERN_SEMINFO_SEMOPM	5	/* int: max operations per semop call */
-#define	KERN_SEMINFO_SEMUME	6	/* int: max undo entries per process */
-#define	KERN_SEMINFO_SEMUSZ	7	/* int: size in bytes of struct undo */
-#define	KERN_SEMINFO_SEMVMX	8	/* int: semaphore maximum value */
-#define	KERN_SEMINFO_SEMAEM	9	/* int: adjust on exit max value */
-#define	KERN_SEMINFO_MAXID	10	/* number of valid semaphore sysctls */
-
-#define	CTL_KERN_SEMINFO_NAMES { \
-	{ 0, 0 }, \
-	{ "semmni", CTLTYPE_INT }, \
-	{ "semmns", CTLTYPE_INT }, \
-	{ "semmnu", CTLTYPE_INT }, \
-	{ "semmsl", CTLTYPE_INT }, \
-	{ "semopm", CTLTYPE_INT }, \
-	{ "semume", CTLTYPE_INT }, \
-	{ "semusz", CTLTYPE_INT }, \
-	{ "semvmx", CTLTYPE_INT }, \
-	{ "semaem", CTLTYPE_INT }, \
-}
-
-#endif /* __BSD_VISIBLE */
-
-struct sem {
+#ifdef _KERNEL
+struct __sem {
 	unsigned short	semval;		/* semaphore value */
 	pid_t		sempid;		/* pid of last operation */
 	unsigned short	semncnt;	/* # awaiting semval > cval */
 	unsigned short	semzcnt;	/* # awaiting semval = 0 */
 };
+#endif /* _KERNEL */
 
 struct semid_ds {
-	struct ipc_perm	sem_perm;	/* operation permission struct */
-	struct sem	*sem_base;	/* pointer to first semaphore in set */
-	unsigned short	sem_nsems;	/* number of sems in set */
-	time_t		sem_otime;	/* last operation time */
-	long		sem_pad1;	/* SVABI/386 says I need this here */
-	time_t		sem_ctime;	/* last change time */
-	    				/* Times measured in secs since */
-	    				/* 00:00:00 GMT, Jan. 1, 1970 */
-	long		sem_pad2;	/* SVABI/386 says I need this here */
-	long		sem_pad3[4];	/* SVABI/386 says I need this here */
+	struct ipc_perm	sem_perm;	/* operation permission structure */
+	unsigned short	sem_nsems;	/* number of semaphores in set */
+	time_t		sem_otime;	/* last semop() time */
+	time_t		sem_ctime;	/* last time changed by semctl() */
+
+	/*
+	 * These members are private and used only in the internal
+	 * implementation of this interface.
+	 */
+	struct __sem	*_sem_base;	/* pointer to first semaphore in set */
 };
 
 /*
@@ -71,16 +73,7 @@ struct sembuf {
 	short		sem_op;		/* semaphore operation */
 	short		sem_flg;	/* operation flags */
 };
-#define SEM_UNDO	010000
-
-/*
- * semctl's arg parameter structure
- */
-union semun {
-	int		val;		/* value for SETVAL */
-	struct semid_ds	*buf;		/* buffer for IPC_STAT & IPC_SET */
-	unsigned short	*array;		/* array for GETALL & SETALL */
-};
+#define SEM_UNDO	010000		/* undo changes on process exit */
 
 /*
  * commands for semctl
@@ -93,17 +86,7 @@ union semun {
 #define SETVAL	8	/* Set the value of semval to arg.val {ALTER} */
 #define SETALL	9	/* Set semvals from arg.array {ALTER} */
 
-
-/*
- * Permissions
- */
-#define SEM_A		0200	/* alter permission */
-#define SEM_R		0400	/* read permission */
-
-
 #ifdef _KERNEL
-#include <sys/queue.h>
-
 /*
  * Kernel implementation stuff
  */
@@ -111,40 +94,68 @@ union semun {
 #define SEMAEM	16384		/* adjust on exit max value */
 
 /*
+ * Permissions
+ */
+#define SEM_A		0200	/* alter permission */
+#define SEM_R		0400	/* read permission */
+
+/*
  * Undo structure (one per process)
  */
-struct sem_undo {
-	SLIST_ENTRY(sem_undo) un_next;	/* ptr to next active undo structure */
-	struct	process *un_proc;	/* owner of this structure */
-	short	un_cnt;			/* # of active entries */
-	struct undo {
-		short	un_adjval;	/* adjust on exit values */
-		short	un_num;		/* semaphore # */
-		int	un_id;		/* semid */
-	} un_ent[1];			/* undo entries */
+struct sem_undo_entry {
+	short	un_adjval;	/* adjust on exit values */
+	short	un_num;		/* semaphore # */
+	int	un_id;		/* semid */
 };
 
+struct sem_undo {
+	struct	sem_undo *un_next;	/* ptr to next active undo structure */
+	struct	proc *un_proc;		/* owner of this structure */
+	short	un_cnt;			/* # of active entries */
+	struct	sem_undo_entry un_ent[1];/* undo entries */
+};
+#endif /* _KERNEL */
+
+#if defined(_NETBSD_SOURCE)
 /*
  * semaphore info struct
  */
 struct seminfo {
-	int	semmni,		/* # of semaphore identifiers */
-		semmns,		/* # of semaphores in system */
-		semmnu,		/* # of undo structures in system */
-		semmsl,		/* max # of semaphores per id */
-		semopm,		/* max # of operations per semop call */
-		semume,		/* max # of undo entries per process */
-		semusz,		/* size in bytes of undo structure */
-		semvmx,		/* semaphore maximum value */
-		semaem;		/* adjust on exit max value */
+	int32_t	semmap;		/* # of entries in semaphore map */
+	int32_t	semmni;		/* # of semaphore identifiers */
+	int32_t	semmns;		/* # of semaphores in system */
+	int32_t	semmnu;		/* # of undo structures in system */
+	int32_t	semmsl;		/* max # of semaphores per id */
+	int32_t	semopm;		/* max # of operations per semop call */
+	int32_t	semume;		/* max # of undo entries per process */
+	int32_t	semusz;		/* size in bytes of undo structure */
+	int32_t	semvmx;		/* semaphore maximum value */
+	int32_t	semaem;		/* adjust on exit max value */
 };
 
+/* Warning: 64-bit structure padding is needed here */
+struct semid_ds_sysctl {
+	struct	ipc_perm_sysctl sem_perm;
+	int16_t	sem_nsems;
+	int16_t	pad2;
+	int32_t	pad3;
+	time_t	sem_otime;
+	time_t	sem_ctime;
+};
 struct sem_sysctl_info {
 	struct	seminfo seminfo;
-	struct	semid_ds semids[1];
+	struct	semid_ds_sysctl semids[1];
 };
 
-extern struct seminfo	seminfo;
+/*
+ * Internal "mode" bits.  The first of these is used by ipcs(1), and so
+ * is defined outside the kernel as well.
+ */
+#define	SEM_ALLOC	01000	/* semaphore is allocated */
+#endif /* !_POSIX_C_SOURCE && !_XOPEN_SOURCE */
+
+#ifdef _KERNEL
+#define	SEM_DEST	02000	/* semaphore will be destroyed on last detach */
 
 /*
  * Configuration parameters
@@ -163,6 +174,9 @@ extern struct seminfo	seminfo;
 #endif
 
 /* shouldn't need tuning */
+#ifndef SEMMAP
+#define SEMMAP	30		/* # of entries in semaphore map */
+#endif
 #ifndef SEMMSL
 #define SEMMSL	SEMMNS		/* max # of semaphores per id */
 #endif
@@ -171,22 +185,57 @@ extern struct seminfo	seminfo;
 #endif
 
 /* actual size of an undo structure */
-#define SEMUSZ	(sizeof(struct sem_undo)+sizeof(struct undo)*SEMUME)
+#define SEMUSZ	(sizeof(struct sem_undo)+sizeof(struct sem_undo_entry)*SEMUME)
 
-extern struct	semid_ds **sema;	/* semaphore id list */
+/*
+ * Structures allocated in machdep.c
+ */
+extern struct seminfo seminfo;
+extern struct semid_ds *sema;		/* semaphore id pool */
 
-void	seminit(void);
-void	semexit(struct process *);
-int	sysctl_sysvsem(int *, u_int, void *, size_t *, void *, size_t);
+/*
+ * Parameters to the semconfig system call
+ */
+#define	SEM_CONFIG_FREEZE	0	/* Freeze the semaphore facility. */
+#define	SEM_CONFIG_THAW		1	/* Thaw the semaphore facility. */
+
+#define SYSCTL_FILL_SEM(src, dst) do { \
+	SYSCTL_FILL_PERM((src).sem_perm, (dst).sem_perm); \
+	(dst).sem_nsems = (src).sem_nsems; \
+	(dst).sem_otime = (src).sem_otime; \
+	(dst).sem_ctime = (src).sem_ctime; \
+} while (0)
+
+void do_semop_init(void);
+int do_semop1(struct lwp*, int, struct sembuf*, size_t, struct timespec*, register_t*);
+
 #endif /* _KERNEL */
 
 #ifndef _KERNEL
+#include <sys/cdefs.h>
+
 __BEGIN_DECLS
-int	semctl(int, int, int, ...);
-int	__semctl(int, int, int, union semun *);
+#ifndef __LIBC12_SOURCE__
+int	semctl(int, int, int, ...) __RENAME(__semctl50);
+#endif
 int	semget(key_t, int, int);
 int	semop(int, struct sembuf *, size_t);
+struct timespec;
+int	semtimedop(int, struct sembuf *, size_t, struct timespec *);
+#if defined(_NETBSD_SOURCE)
+int	semconfig(int);
+#endif
 __END_DECLS
+#else
+int	seminit(void);
+int	semfini(void);
+void	semexit(struct proc *, void *);
+
+int	semctl1(struct lwp *, int, int, int, void *, register_t *);
+#define get_semctl_arg(cmd, sembuf, arg) \
+    ((cmd) == IPC_SET || (cmd) == IPC_STAT ? (void *)sembuf \
+    : (cmd) == GETALL || (cmd) == SETVAL || (cmd) == SETALL ? (void *)arg \
+    : NULL)
 #endif /* !_KERNEL */
 
 #endif /* !_SYS_SEM_H_ */

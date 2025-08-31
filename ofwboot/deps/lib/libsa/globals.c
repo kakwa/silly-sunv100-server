@@ -1,5 +1,4 @@
-/*	$OpenBSD: globals.c,v 1.4 2014/07/13 15:31:20 mpi Exp $	*/
-/*	$NetBSD: globals.c,v 1.3 1995/09/18 21:19:27 pk Exp $	*/
+/*	$NetBSD: globals.c,v 1.12 2022/04/24 06:52:59 mlelstv Exp $	*/
 
 /*
  *	globals.c:
@@ -9,25 +8,19 @@
  */
 
 #include <sys/param.h>
-#include <sys/socket.h>
-#include <net/if.h>
+#include <net/if_ether.h>		/* for ETHER_ADDR_LEN */
 #include <netinet/in.h>
+#include <netinet/in_systm.h>
 
 #include "stand.h"
 #include "net.h"
 
-u_char	bcea[6] = BA;			/* broadcast ethernet address */
+u_char	bcea[ETHER_ADDR_LEN] = BA;	/* broadcast ethernet address */
 
-char	rootpath[FNAME_SIZE] = "/";	/* root mount path */
+char	rootpath[FNAME_SIZE];		/* root mount path */
 char	bootfile[FNAME_SIZE];		/* bootp says to boot this */
 char	hostname[FNAME_SIZE];		/* our hostname */
-int	hostnamelen;
-char	domainname[FNAME_SIZE];		/* our DNS domain */
-int	domainnamelen;
-char	ifname[IFNAME_SIZE];		/* name of interface (e.g. "le0") */
 struct	in_addr myip;			/* my ip address */
-struct	in_addr nameip;			/* DNS server ip address */
 struct	in_addr rootip;			/* root ip address */
-struct	in_addr swapip;			/* swap ip address */
 struct	in_addr gateip;			/* swap ip address */
-u_int32_t netmask = 0xffffff00;		/* subnet or net mask */
+n_long	netmask = 0xffffff00;		/* subnet or net mask */

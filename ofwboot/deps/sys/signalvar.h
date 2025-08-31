@@ -1,5 +1,4 @@
-/*	$OpenBSD: signalvar.h,v 1.58 2025/03/10 09:28:57 claudio Exp $	*/
-/*	$NetBSD: signalvar.h,v 1.17 1996/04/22 01:23:31 christos Exp $	*/
+/*	$NetBSD: signalvar.h,v 1.104 2021/11/01 05:07:17 thorpej Exp $	*/
 
 /*
  * Copyright (c) 1991, 1993
@@ -29,11 +28,20 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)signalvar.h	8.3 (Berkeley) 1/4/94
+ *	@(#)signalvar.h	8.6 (Berkeley) 2/19/95
  */
 
-#ifndef	_SYS_SIGNALVAR_H_		/* tmp for user.h */
+#ifndef	_SYS_SIGNALVAR_H_
 #define	_SYS_SIGNALVAR_H_
+
+#include <sys/siginfo.h>
+#include <sys/queue.h>
+#include <sys/mutex.h>
+#include <sys/stdbool.h>
+
+#ifndef _KERNEL
+#include <string.h>     /* Required for memset(3) and memcpy(3) prototypes */
+#endif /* _KERNEL */
 
 /*
  * Kernel signal definitions and data structures,
@@ -41,100 +49,277 @@
  */
 
 /*
- * Process signal actions and state, needed only within the process
- * (not necessarily resident).
- *
- * Locks used to protect struct members in struct sigacts:
- *	a	atomic operations
- *	m	this process' `ps_mtx'
+ * Queue of signals.
  */
-struct	sigacts {
-	sig_t	ps_sigact[NSIG];	/* [m] disposition of signals */
-	sigset_t ps_catchmask[NSIG];	/* [m] signals to be blocked */
-	sigset_t ps_sigonstack;		/* [m] signals to take on sigstack */
-	sigset_t ps_sigintr;		/* [m] signals interrupt syscalls */
-	sigset_t ps_sigreset;		/* [m] signals that reset when caught */
-	sigset_t ps_siginfo;		/* [m] signals that provide siginfo */
-	sigset_t ps_sigignore;		/* [m] signals being ignored */
-	sigset_t ps_sigcatch;		/* [m] signals being caught by user */
-	int	ps_sigflags;		/* [a] signal flags, below */
+typedef TAILQ_HEAD(ksiginfoq, ksiginfo) ksiginfoq_t;
+
+/*
+ * Process signal actions, possibly shared between processes.
+ */
+struct sigacts {
+	struct sigact_sigdesc {
+		struct sigaction sd_sigact;
+		const void	*sd_tramp;
+		int		sd_vers;
+	} sa_sigdesc[NSIG];		/* disposition of signals */
+
+	int		sa_refcnt;	/* reference count */
+	kmutex_t	sa_mutex;	/* lock on sa_refcnt */
 };
 
-/* signal flags */
-#define	SAS_NOCLDSTOP	0x01	/* No SIGCHLD when children stop. */
-#define	SAS_NOCLDWAIT	0x02	/* No zombies if child dies */
+/*
+ * Pending signals, per LWP and per process.
+ */
+typedef struct sigpend {
+	ksiginfoq_t	sp_info;
+	sigset_t	sp_set;
+} sigpend_t;
+
+/*
+ * Process signal state.
+ */
+struct sigctx {
+	struct _ksiginfo ps_info;	/* for core dump/debugger XXX */
+	int		 ps_lwp;	/* for core dump/debugger XXX */
+	bool		 ps_faked;	/* for core dump/debugger XXX */
+	void		*ps_sigcode;	/* address of signal trampoline */
+	sigset_t	 ps_sigignore;	/* Signals being ignored. */
+	sigset_t	 ps_sigcatch;	/* Signals being caught by user. */
+	sigset_t	 ps_sigpass;	/* Signals evading the debugger. */
+};
 
 /* additional signal action values, used only temporarily/internally */
 #define	SIG_CATCH	(void (*)(int))2
-#define	SIG_HOLD	(void (*)(int))3
 
 /*
- * Check if process p has an unmasked signal pending.
- * Return mask of pending signals.
+ * get signal action for process and signal; currently only for current process
  */
-#define SIGPENDING(p)							\
-	(((p)->p_siglist | (p)->p_p->ps_siglist) & ~(p)->p_sigmask)
+#define SIGACTION(p, sig)	(p->p_sigacts->sa_sigdesc[(sig)].sd_sigact)
+#define	SIGACTION_PS(ps, sig)	(ps->sa_sigdesc[(sig)].sd_sigact)
+
+/*
+ * Copy a sigaction structure without padding.
+ */
+static __inline void
+sigaction_copy(struct sigaction *dst, const struct sigaction *src)
+{
+	memset(dst, 0, sizeof(*dst));
+	dst->_sa_u._sa_handler = src->_sa_u._sa_handler;
+	memcpy(&dst->sa_mask, &src->sa_mask, sizeof(dst->sa_mask));
+	dst->sa_flags = src->sa_flags;
+}
 
 /*
  * Signal properties and actions.
+ * The array below categorizes the signals and their default actions
+ * according to the following properties:
  */
-#define	SA_KILL		0x01		/* terminates process by default */
-#define	SA_CORE		0x02		/* ditto and coredumps */
-#define	SA_STOP		0x04		/* suspend process */
-#define	SA_TTYSTOP	0x08		/* ditto, from tty */
-#define	SA_IGNORE	0x10		/* ignore by default */
-#define	SA_CONT		0x20		/* continue if suspended */
-#define	SA_CANTMASK	0x40		/* non-maskable, catchable */
-
-#define	sigcantmask	(sigmask(SIGKILL) | sigmask(SIGSTOP))
+#define	SA_KILL		0x0001		/* terminates process by default */
+#define	SA_CORE		0x0002		/* ditto and coredumps */
+#define	SA_STOP		0x0004		/* suspend process */
+#define	SA_TTYSTOP	0x0008		/* ditto, from tty */
+#define	SA_IGNORE	0x0010		/* ignore by default */
+#define	SA_CONT		0x0020		/* continue if suspended */
+#define	SA_CANTMASK	0x0040		/* non-maskable, catchable */
+#define	SA_NORESET	0x0080		/* not reset when caught */
+#define	SA_TOLWP	0x0100		/* to LWP that generated, if local */
+#define	SA_TOALL	0x0200		/* always to all LWPs */
 
 #ifdef _KERNEL
-enum signal_type { SPROCESS, STHREAD };
 
-struct sigio_ref;
+#include <sys/systm.h>			/* for copyin_t/copyout_t */
 
-struct sigctx {
-	sig_t		sig_action;
-	sigset_t	sig_catchmask;
-	int		sig_onstack;
-	int		sig_intr;
-	int		sig_reset;
-	int		sig_info;
-	int		sig_ignore;
-	int		sig_catch;
-	int		sig_stop;
-};
+extern sigset_t contsigmask, stopsigmask, sigcantmask;
+
+struct vnode;
+struct coredump_iostate;
 
 /*
  * Machine-independent functions:
  */
-int	coredump(struct proc *p);
-void	execsigs(struct proc *p);
-int	cursig(struct proc *p, struct sigctx *, int);
-void	pgsigio(struct sigio_ref *sir, int sig, int checkctty);
-void	pgsignal(struct pgrp *pgrp, int sig, int checkctty);
-void	psignal(struct proc *p, int sig);
-void	ptsignal(struct proc *p, int sig, enum signal_type type);
-void	prsignal(struct process *pr, int sig);
-void	trapsignal(struct proc *p, int sig, u_long code, int type,
-	    union sigval val);
-__dead void sigexit(struct proc *, int);
-void	sigabort(struct proc *);
-int	sigismasked(struct proc *, int);
-int	sigonstack(size_t);
-int	killpg1(struct proc *, int, int, int);
+int	coredump_netbsd(struct lwp *, struct coredump_iostate *);
+int	coredump_netbsd32(struct lwp *, struct coredump_iostate *);
+int	real_coredump_netbsd(struct lwp *, struct coredump_iostate *);
+void	execsigs(struct proc *);
+int	issignal(struct lwp *);
+void	pgsignal(struct pgrp *, int, int);
+void	kpgsignal(struct pgrp *, struct ksiginfo *, void *, int);
+void	postsig(int);
+void	psignal(struct proc *, int);
+void	kpsignal(struct proc *, struct ksiginfo *, void *);
+void	child_psignal(struct proc *, int);
+void	siginit(struct proc *);
+void	trapsignal(struct lwp *, struct ksiginfo *);
+void	sigexit(struct lwp *, int) __dead;
+void	killproc(struct proc *, const char *);
+void	setsigvec(struct proc *, int, struct sigaction *);
+int	killpg1(struct lwp *, struct ksiginfo *, int, int);
+void	proc_unstop(struct proc *p);
+void	eventswitch(int, int, int);
+void	eventswitchchild(struct proc *, int, int);
+
+int	sigaction1(struct lwp *, int, const struct sigaction *,
+	    struct sigaction *, const void *, int);
+int	sigprocmask1(struct lwp *, int, const sigset_t *, sigset_t *);
+void	sigpending1(struct lwp *, sigset_t *);
+void	sigsuspendsetup(struct lwp *, const sigset_t *);
+void	sigsuspendteardown(struct lwp *);
+int	sigsuspend1(struct lwp *, const sigset_t *);
+int	sigaltstack1(struct lwp *, const stack_t *, stack_t *);
+int	sigismasked(struct lwp *, int);
+
+int	sigget(sigpend_t *, ksiginfo_t *, int, const sigset_t *);
+void	sigclear(sigpend_t *, const sigset_t *, ksiginfoq_t *);
+void	sigclearall(struct proc *, const sigset_t *, ksiginfoq_t *);
+
+int	kpsignal2(struct proc *, ksiginfo_t *);
 
 void	signal_init(void);
 
-void	sigstkinit(struct sigaltstack *);
-struct sigacts	*sigactsinit(struct process *);
+struct sigacts	*sigactsinit(struct proc *, int);
+void	sigactsunshare(struct proc *);
 void	sigactsfree(struct sigacts *);
-void	siginit(struct sigacts *);
+
+void	kpsendsig(struct lwp *, const struct ksiginfo *, const sigset_t *);
+void	sendsig_reset(struct lwp *, int);
+void	sendsig(const struct ksiginfo *, const sigset_t *);
+
+ksiginfo_t	*ksiginfo_alloc(struct proc *, ksiginfo_t *, int);
+void	ksiginfo_free(ksiginfo_t *);
+void	ksiginfo_queue_drain0(ksiginfoq_t *);
+
+struct sys_____sigtimedwait50_args;
+int	sigtimedwait1(struct lwp *, const struct sys_____sigtimedwait50_args *,
+    register_t *, copyin_t, copyout_t, copyin_t, copyout_t);
+
+void	signotify(struct lwp *);
+int	sigispending(struct lwp *, int);
 
 /*
  * Machine-dependent functions:
  */
-int	sendsig(sig_t _catcher, int _sig, sigset_t _mask, const siginfo_t *_si,
-	    int _info, int _onstack);
+void	sendsig_sigcontext(const struct ksiginfo *, const sigset_t *);
+void	sendsig_siginfo(const struct ksiginfo *, const sigset_t *);
+
+extern	struct pool ksiginfo_pool;
+
+/*
+ * firstsig:
+ *
+ * 	Return the first signal in a signal set.
+ */
+static __inline int
+firstsig(const sigset_t *ss)
+{
+	int sig;
+
+	sig = ffs(ss->__bits[0]);
+	if (sig != 0)
+		return (sig);
+#if NSIG > 33
+	sig = ffs(ss->__bits[1]);
+	if (sig != 0)
+		return (sig + 32);
+#endif
+#if NSIG > 65
+	sig = ffs(ss->__bits[2]);
+	if (sig != 0)
+		return (sig + 64);
+#endif
+#if NSIG > 97
+	sig = ffs(ss->__bits[3]);
+	if (sig != 0)
+		return (sig + 96);
+#endif
+	return (0);
+}
+
+static __inline void
+ksiginfo_queue_init(ksiginfoq_t *kq)
+{
+	TAILQ_INIT(kq);
+}
+
+static __inline void
+ksiginfo_queue_drain(ksiginfoq_t *kq)
+{
+	if (!TAILQ_EMPTY(kq))
+		ksiginfo_queue_drain0(kq);
+}
+
+#endif	/* _KERNEL */
+
+#ifdef	_KERNEL
+#ifdef	SIGPROP
+const int sigprop[NSIG] = {
+	0,					/* 0 unused */
+	SA_KILL,				/* 1 SIGHUP */
+	SA_KILL,				/* 2 SIGINT */
+	SA_KILL|SA_CORE,			/* 3 SIGQUIT */
+	SA_KILL|SA_CORE|SA_NORESET|SA_TOLWP,	/* 4 SIGILL */
+	SA_KILL|SA_CORE|SA_NORESET|SA_TOLWP,	/* 5 SIGTRAP */
+	SA_KILL|SA_CORE,			/* 6 SIGABRT */
+	SA_KILL|SA_CORE|SA_TOLWP,		/* 7 SIGEMT */
+	SA_KILL|SA_CORE|SA_TOLWP,		/* 8 SIGFPE */
+	SA_KILL|SA_CANTMASK|SA_TOALL,		/* 9 SIGKILL */
+	SA_KILL|SA_CORE|SA_TOLWP,		/* 10 SIGBUS */
+	SA_KILL|SA_CORE|SA_TOLWP,		/* 11 SIGSEGV */
+	SA_KILL|SA_CORE|SA_TOLWP,		/* 12 SIGSYS */
+	SA_KILL,				/* 13 SIGPIPE */
+	SA_KILL,				/* 14 SIGALRM */
+	SA_KILL,				/* 15 SIGTERM */
+	SA_IGNORE,				/* 16 SIGURG */
+	SA_STOP|SA_CANTMASK|SA_TOALL,		/* 17 SIGSTOP */
+	SA_STOP|SA_TTYSTOP|SA_TOALL,		/* 18 SIGTSTP */
+	SA_IGNORE|SA_CONT|SA_TOALL,		/* 19 SIGCONT */
+	SA_IGNORE,				/* 20 SIGCHLD */
+	SA_STOP|SA_TTYSTOP|SA_TOALL,		/* 21 SIGTTIN */
+	SA_STOP|SA_TTYSTOP|SA_TOALL,		/* 22 SIGTTOU */
+	SA_IGNORE,				/* 23 SIGIO */
+	SA_KILL,				/* 24 SIGXCPU */
+	SA_KILL,				/* 25 SIGXFSZ */
+	SA_KILL,				/* 26 SIGVTALRM */
+	SA_KILL,				/* 27 SIGPROF */
+	SA_IGNORE,				/* 28 SIGWINCH  */
+	SA_IGNORE,				/* 29 SIGINFO */
+	SA_KILL,				/* 30 SIGUSR1 */
+	SA_KILL,				/* 31 SIGUSR2 */
+	SA_IGNORE|SA_NORESET,			/* 32 SIGPWR */
+	SA_KILL,				/* 33 SIGRTMIN + 0 */
+	SA_KILL,				/* 34 SIGRTMIN + 1 */
+	SA_KILL,				/* 35 SIGRTMIN + 2 */
+	SA_KILL,				/* 36 SIGRTMIN + 3 */
+	SA_KILL,				/* 37 SIGRTMIN + 4 */
+	SA_KILL,				/* 38 SIGRTMIN + 5 */
+	SA_KILL,				/* 39 SIGRTMIN + 6 */
+	SA_KILL,				/* 40 SIGRTMIN + 7 */
+	SA_KILL,				/* 41 SIGRTMIN + 8 */
+	SA_KILL,				/* 42 SIGRTMIN + 9 */
+	SA_KILL,				/* 43 SIGRTMIN + 10 */
+	SA_KILL,				/* 44 SIGRTMIN + 11 */
+	SA_KILL,				/* 45 SIGRTMIN + 12 */
+	SA_KILL,				/* 46 SIGRTMIN + 13 */
+	SA_KILL,				/* 47 SIGRTMIN + 14 */
+	SA_KILL,				/* 48 SIGRTMIN + 15 */
+	SA_KILL,				/* 49 SIGRTMIN + 16 */
+	SA_KILL,				/* 50 SIGRTMIN + 17 */
+	SA_KILL,				/* 51 SIGRTMIN + 18 */
+	SA_KILL,				/* 52 SIGRTMIN + 19 */
+	SA_KILL,				/* 53 SIGRTMIN + 20 */
+	SA_KILL,				/* 54 SIGRTMIN + 21 */
+	SA_KILL,				/* 55 SIGRTMIN + 22 */
+	SA_KILL,				/* 56 SIGRTMIN + 23 */
+	SA_KILL,				/* 57 SIGRTMIN + 24 */
+	SA_KILL,				/* 58 SIGRTMIN + 25 */
+	SA_KILL,				/* 59 SIGRTMIN + 26 */
+	SA_KILL,				/* 60 SIGRTMIN + 27 */
+	SA_KILL,				/* 61 SIGRTMIN + 28 */
+	SA_KILL,				/* 62 SIGRTMIN + 29 */
+	SA_KILL,				/* 63 SIGRTMIN + 30 */
+};
+#undef	SIGPROP
+#else
+extern const int sigprop[NSIG];
+#endif	/* SIGPROP */
 #endif	/* _KERNEL */
 #endif	/* !_SYS_SIGNALVAR_H_ */

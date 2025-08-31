@@ -1,5 +1,4 @@
-/*	$OpenBSD: resource.h,v 1.14 2013/10/25 04:42:48 guenther Exp $	*/
-/*	$NetBSD: resource.h,v 1.14 1996/02/09 18:25:27 christos Exp $	*/
+/*	$NetBSD: resource.h,v 1.36 2019/03/30 23:29:55 christos Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1993
@@ -29,18 +28,19 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)resource.h	8.2 (Berkeley) 1/4/94
+ *	@(#)resource.h	8.4 (Berkeley) 1/9/95
  */
 
 #ifndef _SYS_RESOURCE_H_
 #define	_SYS_RESOURCE_H_
 
+#include <sys/featuretest.h>
 #include <sys/time.h>
 
 /*
  * Process priority specifications to get/setpriority.
  */
-#define	PRIO_MIN	(-20)
+#define	PRIO_MIN	-20
 #define	PRIO_MAX	20
 
 #define	PRIO_PROCESS	0
@@ -52,15 +52,14 @@
  */
 
 #define	RUSAGE_SELF	0
-#define	RUSAGE_CHILDREN	(-1)
-#define	RUSAGE_THREAD	1
+#define	RUSAGE_CHILDREN	-1
 
 struct	rusage {
 	struct timeval ru_utime;	/* user time used */
 	struct timeval ru_stime;	/* system time used */
 	long	ru_maxrss;		/* max resident set size */
 #define	ru_first	ru_ixrss
-	long	ru_ixrss;		/* integral shared text memory size */
+	long	ru_ixrss;		/* integral shared memory size */
 	long	ru_idrss;		/* integral unshared data " */
 	long	ru_isrss;		/* integral unshared stack " */
 	long	ru_minflt;		/* page reclaims */
@@ -76,6 +75,13 @@ struct	rusage {
 #define	ru_last		ru_nivcsw
 };
 
+#ifdef _NETBSD_SOURCE
+struct wrusage {  
+        struct rusage   wru_self;
+	struct rusage   wru_children;
+};  
+#endif
+
 /*
  * Resource limits
  */
@@ -88,38 +94,68 @@ struct	rusage {
 #define	RLIMIT_MEMLOCK	6		/* locked-in-memory address space */
 #define	RLIMIT_NPROC	7		/* number of processes */
 #define	RLIMIT_NOFILE	8		/* number of open files */
+#define	RLIMIT_SBSIZE	9		/* maximum size of all socket buffers */
+#define	RLIMIT_AS	10		/* virtual process size (inclusive of mmap) */
+#define	RLIMIT_VMEM	RLIMIT_AS	/* common alias */
+#define	RLIMIT_NTHR	11		/* number of threads */
 
-#define	RLIM_NLIMITS	9		/* number of resource limits */
+#if defined(_NETBSD_SOURCE)
+#define	RLIM_NLIMITS	12		/* number of resource limits */
 
-#define	RLIM_INFINITY	(((rlim_t)1 << 63) - 1)
-#define	RLIM_SAVED_MAX	RLIM_INFINITY
-#define	RLIM_SAVED_CUR	RLIM_INFINITY
+#define RLIM_STRINGS { \
+	"cpu-time", \
+	"file-size", \
+	"data-size", \
+	"stack-size", \
+	"core-dump-size", \
+	"resident-memory-size", \
+	"locked-memory-size", \
+	"processes-number", \
+	"files-number", \
+	"socket-buffer-size", \
+	"virtual-memory-size", \
+	"threads-number", \
+}
+#endif
+
+#define	RLIM_INFINITY	(~((u_quad_t)1 << 63))	/* no limit */
+#define	RLIM_SAVED_MAX	RLIM_INFINITY	/* unrepresentable hard limit */
+#define	RLIM_SAVED_CUR	RLIM_INFINITY	/* unrepresentable soft limit */
+
+#if defined(_KERNEL)
+/* 4.3BSD compatibility rlimit argument structure. */
+struct orlimit {
+	int32_t	rlim_cur;		/* current (soft) limit */
+	int32_t	rlim_max;		/* maximum value for rlim_cur */
+};
+#endif
 
 struct rlimit {
 	rlim_t	rlim_cur;		/* current (soft) limit */
 	rlim_t	rlim_max;		/* maximum value for rlim_cur */
 };
 
-#if __BSD_VISIBLE
+#if defined(_NETBSD_SOURCE)
 /* Load average structure. */
 struct loadavg {
 	fixpt_t	ldavg[3];
 	long	fscale;
 };
-#endif /* __BSD_VISIBLE */
+#endif
 
 #ifdef _KERNEL
 extern struct loadavg averunnable;
-struct process;
-int	dosetrlimit(struct proc *, u_int, struct rlimit *);
-int	donice(struct proc *, struct process *, int);
-int	dogetrusage(struct proc *, int, struct rusage *);
-
+struct pcred;
+int	dosetrlimit(struct lwp *, struct proc *, int, struct rlimit *);
 #else
+#include <sys/cdefs.h>
+
 __BEGIN_DECLS
 int	getpriority(int, id_t);
 int	getrlimit(int, struct rlimit *);
-int	getrusage(int, struct rusage *);
+#ifndef __LIBC12_SOURCE__
+int	getrusage(int, struct rusage *) __RENAME(__getrusage50);
+#endif
 int	setpriority(int, id_t, int);
 int	setrlimit(int, const struct rlimit *);
 __END_DECLS

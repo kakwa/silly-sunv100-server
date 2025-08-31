@@ -1,5 +1,4 @@
-/*	$OpenBSD: syslog.h,v 1.19 2023/04/27 23:16:18 gnezdo Exp $	*/
-/*	$NetBSD: syslog.h,v 1.14 1996/04/03 20:46:44 christos Exp $	*/
+/*	$NetBSD: syslog.h,v 1.44 2024/08/21 16:30:27 gutteridge Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1988, 1993
@@ -35,11 +34,12 @@
 #ifndef _SYS_SYSLOG_H_
 #define _SYS_SYSLOG_H_
 
-#define	_PATH_LOG	"/dev/log"
+#include <sys/cdefs.h>
+#include <sys/featuretest.h>
+#include <sys/ansi.h>
+#include <sys/stdarg.h>
 
-#define	LIOCSFD		_IOW('l', 127, int)	/* set sendsyslog() fd */
-
-#define LOG_MAXLINE	8192			/* maximum line length */
+#define	_PATH_LOG	"/var/run/log"
 
 /*
  * priorities/facilities are encoded into a single 32-bit quantity, where the
@@ -68,7 +68,7 @@
 				/* mark "facility" */
 #define	INTERNAL_MARK	(LOG_NFACILITIES<<3)
 typedef struct _code {
-	char	*c_name;
+	const char	*c_name;
 	int	c_val;
 } CODE;
 
@@ -82,12 +82,12 @@ CODE prioritynames[] = {
 	{ "info",	LOG_INFO },
 	{ "none",	INTERNAL_NOPRI },	/* INTERNAL */
 	{ "notice",	LOG_NOTICE },
-	{ "panic", 	LOG_EMERG },		/* DEPRECATED */
+	{ "panic",	LOG_EMERG },		/* DEPRECATED */
 	{ "warn",	LOG_WARNING },		/* DEPRECATED */
 	{ "warning",	LOG_WARNING },
-	{ NULL,		-1 },
+	{ NULL,		-1 }
 };
-#endif
+#endif /* SYSLOG_NAMES */
 
 /* facility codes */
 #define	LOG_KERN	(0<<3)	/* kernel messages */
@@ -122,13 +122,13 @@ CODE prioritynames[] = {
 CODE facilitynames[] = {
 	{ "auth",	LOG_AUTH },
 	{ "authpriv",	LOG_AUTHPRIV },
-	{ "cron", 	LOG_CRON },
+	{ "cron",	LOG_CRON },
 	{ "daemon",	LOG_DAEMON },
 	{ "ftp",	LOG_FTP },
 	{ "kern",	LOG_KERN },
 	{ "lpr",	LOG_LPR },
 	{ "mail",	LOG_MAIL },
-	{ "mark", 	INTERNAL_MARK },	/* INTERNAL */
+	{ "mark",	INTERNAL_MARK },	/* INTERNAL */
 	{ "news",	LOG_NEWS },
 	{ "security",	LOG_AUTH },		/* DEPRECATED */
 	{ "syslog",	LOG_SYSLOG },
@@ -142,20 +142,9 @@ CODE facilitynames[] = {
 	{ "local5",	LOG_LOCAL5 },
 	{ "local6",	LOG_LOCAL6 },
 	{ "local7",	LOG_LOCAL7 },
-	{ NULL,		-1 },
+	{ NULL,		-1 }
 };
-#endif
-
-/* Used by reentrant functions */
-
-struct syslog_data {
-	int	log_stat;
-	const char 	*log_tag;
-	int 	log_fac;
-	int 	log_mask;
-};
-
-#define SYSLOG_DATA_INIT {0, (const char *)0, LOG_USER, 0xff}
+#endif /* SYSLOG_NAMES */
 
 #ifdef _KERNEL
 #define	LOG_PRINTF	-1	/* pseudo-priority to indicate use of printf */
@@ -179,43 +168,81 @@ struct syslog_data {
 #define	LOG_NDELAY	0x08	/* don't delay open */
 #define	LOG_NOWAIT	0x10	/* don't wait for console forks: DEPRECATED */
 #define	LOG_PERROR	0x20	/* log to stderr as well */
+#define LOG_PTRIM	0x40	/* trim tag and pid from messages to stderr */
+#define LOG_NLOG	0x80	/* don't write to the system log */
 
 #ifndef _KERNEL
 
-/*
- * Don't use va_list in the vsyslog() prototype.   Va_list is typedef'd
- * in <stdarg.h>.  Including it here may collide with the utility's includes.
- * It's unreasonable for utilities to have to include it to include <syslog.h>,
- * so we get __va_list from <machine/_types.h> and use it.
- */
-#include <sys/cdefs.h>
-#include <machine/_types.h>
+/* Used by reentrant functions */
+
+struct syslog_data {
+	int	log_version;
+	int	log_file;
+	int	log_connected;
+	int	log_opened;
+	int	log_stat;
+	const char	*log_tag;
+	char	log_hostname[256];	/* MAXHOSTNAMELEN */
+	int	log_fac;
+	int	log_mask;
+};
+
+#define SYSLOG_DATA_INIT { \
+    .log_version = 1, \
+    .log_file = -1, \
+    .log_connected = 0, \
+    .log_opened = 0, \
+    .log_stat = 0, \
+    .log_tag  = 0, \
+    .log_hostname = { '\0' }, \
+    .log_fac = LOG_USER, \
+    .log_mask = 0xff, \
+}
 
 __BEGIN_DECLS
 void	closelog(void);
 void	openlog(const char *, int, int);
 int	setlogmask(int);
-void	syslog(int, const char *, ...)
-    __attribute__((__format__(__syslog__,2,3)));
-void	vsyslog(int, const char *, __va_list);
-void	closelog_r(struct syslog_data *);
-void	openlog_r(const char *, int, int, struct syslog_data *);
-int	setlogmask_r(int, struct syslog_data *);
+void	syslog(int, const char *, ...) __sysloglike(2, 3);
+#if defined(_NETBSD_SOURCE)
+void	vsyslog(int, const char *, __va_list) __sysloglike(2, 0);
+#ifndef __LIBC12_SOURCE__
+void	closelog_r(struct syslog_data *) __RENAME(__closelog_r60);
+void	openlog_r(const char *, int, int, struct syslog_data *)
+    __RENAME(__openlog_r60);
+int	setlogmask_r(int, struct syslog_data *) __RENAME(__setlogmask_r60);
 void	syslog_r(int, struct syslog_data *, const char *, ...)
-     __attribute__((__format__(__syslog__,3,4)));
-void	vsyslog_r(int, struct syslog_data *, const char *, __va_list);
-int	sendsyslog(const char *, __size_t, int);
+    __RENAME(__syslog_r60) __sysloglike(3, 4);
+void	vsyslog_r(int, struct syslog_data *, const char *, __va_list)
+    __RENAME(__vsyslog_r60) __sysloglike(3, 0);
+void	syslogp_r(int, struct syslog_data *, const char *, const char *,
+    const char *, ...) __RENAME(__syslogp_r60) __sysloglike(5, 6);
+void	vsyslogp_r(int, struct syslog_data *, const char *, const char *,
+    const char *, __va_list) __RENAME(__vsyslogp_r60) __sysloglike(5, 0);
+void	syslog_ss(int, struct syslog_data *, const char *, ...)
+    __RENAME(__syslog_ss60) __sysloglike(3, 4);
+void    vsyslog_ss(int, struct syslog_data *, const char *, va_list)
+    __RENAME(__vsyslog_ss60) __sysloglike(3, 0);
+void	syslogp_ss(int, struct syslog_data *, const char *, const char *,
+    const char *, ...) __RENAME(__syslogp_ss60) __sysloglike(5, 0);
+void	vsyslogp_ss(int, struct syslog_data *, const char *, const char *,
+    const char *, va_list) __RENAME(__vsyslogp_ss60) __sysloglike(5, 0);
+#endif
+void	syslogp(int, const char *, const char *, const char *, ...)
+    __sysloglike(4, 5);
+void	vsyslogp(int, const char *, const char *, const char *, __va_list)
+    __sysloglike(4, 0);
+#endif
 __END_DECLS
 
 #else /* !_KERNEL */
 
 void	logpri(int);
-void	log(int, const char *, ...)
-    __attribute__((__format__(__kprintf__,2,3)));
-int	addlog(const char *, ...)
-    __attribute__((__format__(__kprintf__,1,2)));
+void	log(int, const char *, ...) __printflike(2, 3);
+void	vlog(int, const char *, __va_list) __printflike(2, 0);
+void	addlog(const char *, ...) __printflike(1, 2);
 void	logwakeup(void);
 
 #endif /* !_KERNEL */
-#endif /* !_SYS_SYSLOG_H_ */
 
+#endif /* !_SYS_SYSLOG_H_ */

@@ -1,5 +1,4 @@
-/*	$OpenBSD: snprintf.c,v 1.7 2019/05/11 16:56:47 deraadt Exp $	*/
-/*	$NetBSD: printf.c,v 1.10 1996/11/30 04:19:21 gwr Exp $	*/
+/*	$NetBSD: snprintf.c,v 1.5 2011/07/17 20:54:52 joerg Exp $	*/
 
 /*-
  * Copyright (c) 1993
@@ -32,41 +31,20 @@
  *	@(#)printf.c	8.1 (Berkeley) 6/11/93
  */
 
+#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/stdarg.h>
 
 #include "stand.h"
 
-extern void kprintn(void (*)(int), u_long, int);
-extern void kdoprnt(void (*)(int), const char *, va_list);
-
-static void sputchar(int);
-
-static char *sbuf, *sbuf_end;
-
-void
-sputchar(int c)
-{
-	if (sbuf < sbuf_end)
-		*sbuf = c;
-	sbuf++;
-}
-
 int
-snprintf(char *buf, size_t len, const char *fmt, ...)
+snprintf(char *buf, size_t size, const char *fmt, ...)
 {
 	va_list ap;
+	int len;
 
-	sbuf = buf;
-	sbuf_end = sbuf + len;
 	va_start(ap, fmt);
-	kdoprnt(sputchar, fmt, ap);
+	len = vsnprintf(buf, size, fmt, ap);
 	va_end(ap);
-
-	if (sbuf < sbuf_end)
-		*sbuf = '\0';
-	else if (len > 0)
-		*(sbuf_end - 1) = '\0';
-
-	return sbuf - buf;
+	return len;
 }

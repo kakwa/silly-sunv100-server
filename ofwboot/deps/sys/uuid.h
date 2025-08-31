@@ -1,5 +1,4 @@
-/*	$OpenBSD: uuid.h,v 1.5 2025/07/11 19:12:49 krw Exp $	*/
-/*	$NetBSD: uuid.h,v 1.5 2008/11/18 14:01:03 joerg Exp $	*/
+/*	$NetBSD: uuid.h,v 1.8 2022/08/20 11:27:09 riastradh Exp $	*/
 
 /*
  * Copyright (c) 2002 Marcel Moolenaar
@@ -32,11 +31,14 @@
 #ifndef _SYS_UUID_H_
 #define	_SYS_UUID_H_
 
+#include <sys/cdefs.h>
+#include <sys/stdint.h>
+
 /* Length of a node address (an IEEE 802 address). */
 #define	_UUID_NODE_LEN		6
 
 /* Length of a printed UUID. */
-#define	_UUID_BUF_LEN		38
+#define	_UUID_STR_LEN		38
 
 /*
  * See also:
@@ -57,14 +59,23 @@ struct uuid {
 #ifdef _KERNEL
 
 #define	UUID_NODE_LEN	_UUID_NODE_LEN
-#define	UUID_BUF_LEN	_UUID_BUF_LEN
+#define	UUID_STR_LEN	_UUID_STR_LEN
 
 int	uuid_snprintf(char *, size_t, const struct uuid *);
 int	uuid_printf(const struct uuid *);
+void	uuid_dec_be(const void *, struct uuid *);
+void	uuid_dec_le(const void *, struct uuid *);
+void	uuid_enc_be(void *, const struct uuid *);
+void	uuid_enc_le(void *, const struct uuid *);
+int	uuidgen(struct uuid *, int);
 
 #else	/* _KERNEL */
 
 typedef struct uuid uuid_t;
+
+__BEGIN_DECLS
+int	uuidgen(struct uuid *, int);
+__END_DECLS
 
 #endif	/* _KERNEL */
 
