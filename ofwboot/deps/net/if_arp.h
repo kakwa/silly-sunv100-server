@@ -43,6 +43,9 @@
  * arp_tha and arp_tpa in that order, according to the lengths
  * specified.  Field names used correspond to RFC 826.
  */
+
+#include <stddef.h>
+
 struct	arphdr {
 	uint16_t ar_hrd;	/* format of hardware address */
 #define ARPHRD_ETHER		1  /* ethernet hardware format */
