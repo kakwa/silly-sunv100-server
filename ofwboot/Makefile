@@ -64,6 +64,8 @@ ENTRY=		_start
 CPPFLAGS+=	-I${CURDIR}/../../.. -I${CURDIR}/../../../.. -I${CURDIR} -I.
 CPPFLAGS+=	-I${CURDIR}/../../../../../common/include
 CPPFLAGS+=	-DRELOC=0x${RELOC}
+CPPFLAGS+=	-I${S}
+CPPFLAGS+=	-I${CURDIR}
 
 #
 # XXXXX FIXME

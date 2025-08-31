@@ -1,5 +1,4 @@
-/*	$OpenBSD: openfirm.h,v 1.20 2024/11/08 12:48:00 miod Exp $	*/
-/*	$NetBSD: openfirm.h,v 1.1 1996/09/30 16:35:10 ws Exp $	*/
+/*	$NetBSD: openfirm.h,v 1.48 2022/01/22 11:49:18 thorpej Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996 Wolfgang Solfrank.
@@ -31,59 +30,32 @@
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
+#ifndef _OPENFIRM_H_
+#define _OPENFIRM_H_
+
+#include <sys/device.h>
+#include <prop/proplib.h>
+
 /*
  * Prototypes for OpenFirmware Interface Routines
  */
 
-#include <sys/param.h>
-#include <sys/device.h>
-
-#define OFMAXPARAM	64
-
-int openfirmware(void *);
-
-extern char OF_buf[];
-
-int OF_peer(int phandle);
-int OF_child(int phandle);
-int OF_parent(int phandle);
-int OF_instance_to_package(int ihandle);
-int OF_getproplen(int handle, char *prop);
-int OF_getprop(int handle, char *prop, void *buf, int buflen);
-int OF_getpropbool(int handle, char *);
-uint32_t OF_getpropint(int handle, char *, uint32_t);
-int OF_getpropintarray(int, char *, uint32_t *, int);
-uint64_t OF_getpropint64(int handle, char *, uint64_t);
-int OF_getpropint64array(int, char *, uint64_t *, int);
-int OF_setprop(int, char *, const void *, int);
-int OF_nextprop(int, char *, void *);
-int OF_finddevice(char *name);
-int OF_is_compatible(int, const char *);
-int OF_call_method_1(char *method, int ihandle, int nargs, ...);
-int OF_call_method(char *method, int ihandle, int nargs, int nreturns, ...);
-int OF_open(char *dname);
-void OF_close(int handle);
-int OF_read(int handle, void *addr, int len);
-int OF_write(int handle, void *addr, int len);
-int OF_seek(int handle, u_quad_t pos);
-void OF_boot(char *bootspec);
-void OF_enter(void);
-void OF_exit(void) __attribute__((__noreturn__));
-int OF_interpret(char *cmd, int nreturns, ...);
-#if 0
-void (*OF_set_callback(void (*newfunc)(void *))) ();
-#endif
-int OF_getnodebyname(int, const char *);
-int OF_getnodebyphandle(uint32_t);
-int OF_getindex(int, const char *, const char *);
+/*
+ * Machine-independent OpenFirmware-related structures.
+ * XXX THESE DO NOT BELONG HERE.
+ */
 
 /*
  * Generic OpenFirmware probe argument.
  * This is how all probe structures must start
  * in order to support generic OpenFirmware device drivers.
  */
-struct ofprobe {
-	int phandle;
+struct ofbus_attach_args {
+	const char	*oba_busname;
+	char		oba_ofname[64];
+	int		oba_phandle;
+
 	/*
 	 * Special unit field for disk devices.
 	 * This is a KLUDGE to work around the fact that OpenFirmware
@@ -91,15 +63,80 @@ struct ofprobe {
 	 * YES, I THINK THIS IS A BUG IN THE OPENFIRMWARE DEFINITION!!!	XXX
 	 * See also ofdisk.c.
 	 */
-	int unit;
+	int		oba_unit;
 };
 
 /*
- * The softc structure for devices we might be booted from (i.e. we might
- * want to set root/swap to) needs to start with these fields:		XXX
+ * Functions and variables provided by machine-dependent code.
  */
-struct ofb_softc {
-	struct device sc_dev;
-	int sc_phandle;
-	int sc_unit;		/* Might be missing for non-disk devices */
-};
+extern char *OF_buf;
+
+void	OF_boot(const char *) __dead;
+int	OF_call_method(const char *, int, int, int, ...);
+int	OF_call_method_1(const char *, int, int, ...);
+int	OF_child(int);
+void	*OF_claim(void *, u_int, u_int);
+void	OF_close(int);
+void	OF_enter(void);
+void	OF_exit(void) __dead;
+int	OF_finddevice(const char *);
+int	OF_getprop(int, const char *, void *, int);
+int	OF_getproplen(int, const char *);
+int	OF_instance_to_package(int);
+int	OF_instance_to_path(int, char *, int);
+int	OF_interpret(const char *, int, int, ...);
+int	OF_milliseconds(void);
+int	OF_nextprop(int, const char *, void *);
+int	OF_open(const char *);
+int	OF_package_to_path(int, char *, int);
+int	OF_parent(int);
+int	OF_peer(int);
+void	OF_quiesce(void);
+int	OF_read(int, void *, int);
+void	OF_release(void *, u_int);
+int	OF_seek(int, u_quad_t);
+void	(*OF_set_callback(void(*)(void *)))(void *);
+int	OF_setprop(int, const char *, const void *, int);
+int	OF_write(int, const void *, int);
+
+int	openfirmware(void *);
+
+/*
+ * Functions and variables provided by machine-independent code.
+ */
+#ifdef _KERNEL
+struct device_compatible_entry;
+
+devhandle_t	devhandle_from_of(devhandle_t, int);
+int		devhandle_to_of(devhandle_t);
+
+#define	OF_DEVICE_CALL_REGISTER(_n_, _c_)				\
+	DEVICE_CALL_REGISTER(of_device_calls, _n_, _c_)
+
+int	of_compatible(int, const char * const *);
+int	of_compatible_match(int, const struct device_compatible_entry *);
+const struct device_compatible_entry *
+	of_compatible_lookup(int, const struct device_compatible_entry *);
+int	of_decode_int(const unsigned char *);
+int	of_packagename(int, char *, int);
+int	of_find_firstchild_byname(int, const char *);
+int	of_find_bycompat(int, const char *);
+int	of_getnode_byname(int, const char *);
+bool	of_to_uint32_prop(prop_dictionary_t, int, const char *, const char *);
+bool	of_to_dataprop(prop_dictionary_t, int, const char *, const char *);
+device_t of_device_from_phandle(int);
+
+int	*of_network_decode_media(int, int *, int *);
+char	*of_get_mode_string(char *, int);
+
+void	of_enter_i2c_devs(prop_dictionary_t, int, size_t, int);
+void	of_enter_spi_devs(prop_dictionary_t, int, size_t);
+#endif /* _KERNEL */
+
+bool	of_hasprop(int, const char *);
+#define of_getprop_bool	of_hasprop
+int	of_getprop_uint32(int, const char *, uint32_t *);
+int	of_getprop_uint32_array(int, const char *, uint32_t *, int);
+int	of_getprop_uint64(int, const char *, uint64_t *);
+
+#endif /*_OPENFIRM_H_*/
