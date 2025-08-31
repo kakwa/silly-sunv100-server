@@ -1,9 +1,10 @@
 libsa.o: \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/bootcfg.c \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/types.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/featuretest.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/types.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/types.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/cread.c \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/stand.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/param.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/null.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/inttypes.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/stdint.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/cdefs.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/cdefs.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/cdefs.h \
@@ -11,12 +12,6 @@ libsa.o: \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/int_types.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/int_types.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/common_int_types.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/ansi.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/common_ansi.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/ansi.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/endian.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/endian.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/stdint.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/int_mwgwtypes.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/int_mwgwtypes.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/common_int_mwgwtypes.h \
@@ -27,18 +22,22 @@ libsa.o: \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/int_const.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/wchar_limits.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/wchar_limits.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/int_fmtio.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/int_fmtio.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/types.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/featuretest.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/types.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/types.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/ansi.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/common_ansi.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/ansi.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/endian.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/endian.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/endian_machdep.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/bswap.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/bswap.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/stdbool.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/fd_set.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/reboot.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/stand.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/param.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/null.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/inttypes.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/int_fmtio.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/int_fmtio.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/syslimits.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/param.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/include/param.h \
@@ -59,8 +58,38 @@ libsa.o: \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/saioctl.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/saerrno.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/errno.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/bootcfg.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libkern/libkern.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/stddef.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/container_of.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libkern/strlist.h
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libkern/strlist.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libz/libz.h \
+ /usr/include/zlib.h /usr/include/zconf.h \
+ /usr/lib/gcc-cross/sparc64-linux-gnu/14/include/stddef.h \
+ /usr/lib/gcc-cross/sparc64-linux-gnu/14/include/limits.h \
+ /usr/lib/gcc-cross/sparc64-linux-gnu/14/include/syslimits.h \
+ /usr/sparc64-linux-gnu/include/limits.h \
+ /usr/sparc64-linux-gnu/include/bits/libc-header-start.h \
+ /usr/sparc64-linux-gnu/include/features.h \
+ /usr/sparc64-linux-gnu/include/features-time64.h \
+ /usr/sparc64-linux-gnu/include/bits/wordsize.h \
+ /usr/sparc64-linux-gnu/include/bits/timesize.h \
+ /usr/sparc64-linux-gnu/include/stdc-predef.h \
+ /usr/sparc64-linux-gnu/include/gnu/stubs.h \
+ /usr/sparc64-linux-gnu/include/gnu/stubs-64.h \
+ /usr/sparc64-linux-gnu/include/bits/posix1_lim.h \
+ /usr/sparc64-linux-gnu/include/bits/local_lim.h \
+ /usr/sparc64-linux-gnu/include/linux/limits.h \
+ /usr/sparc64-linux-gnu/include/bits/pthread_stack_min-dynamic.h \
+ /usr/sparc64-linux-gnu/include/bits/pthread_stack_min.h \
+ /usr/sparc64-linux-gnu/include/bits/posix2_lim.h \
+ /usr/lib/gcc-cross/sparc64-linux-gnu/14/include/stdarg.h \
+ /usr/sparc64-linux-gnu/include/unistd.h \
+ /usr/sparc64-linux-gnu/include/bits/posix_opt.h \
+ /usr/sparc64-linux-gnu/include/bits/environments.h \
+ /usr/sparc64-linux-gnu/include/bits/types.h \
+ /usr/sparc64-linux-gnu/include/bits/typesizes.h \
+ /usr/sparc64-linux-gnu/include/bits/time64.h \
+ /usr/sparc64-linux-gnu/include/bits/confname.h \
+ /usr/sparc64-linux-gnu/include/bits/getopt_posix.h \
+ /usr/sparc64-linux-gnu/include/bits/getopt_core.h \
+ /usr/sparc64-linux-gnu/include/bits/unistd_ext.h
