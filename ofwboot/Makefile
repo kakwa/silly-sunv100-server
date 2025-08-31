@@ -35,8 +35,8 @@ CPPFLAGS+=	-D_STANDALONE
 CPPFLAGS+=	-DBOOT_ELF32 -DBOOT_ELF64 -DBOOT_AOUT
 CPPFLAGS+=	-DNETBOOT
 CPPFLAGS+=	-DSUPPORT_DHCP
-#CPPFLAGS+=	-DNETIF_DEBUG 
-#CPPFLAGS+=	-D_DEBUG
+CPPFLAGS+=	-DNETIF_DEBUG 
+CPPFLAGS+=	-D_DEBUG
 
 # Follow the suit of Makefile.kern.inc; needed for the lfs64 union
 # accessors -- they don't actually dereference the resulting pointer,
