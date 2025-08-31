@@ -1,6 +1,5 @@
 libsa.o: \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/getfile.c \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/stand.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/globals.c \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/param.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/null.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/inttypes.h \
@@ -51,10 +50,38 @@ libsa.o: \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/ucontext.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/machine/mcontext.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/sparc/mcontext.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/net/if_ether.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/net/ethertypes.h \
+ /usr/sparc64-linux-gnu/include/netinet/in.h \
+ /usr/sparc64-linux-gnu/include/features.h \
+ /usr/sparc64-linux-gnu/include/features-time64.h \
+ /usr/sparc64-linux-gnu/include/bits/wordsize.h \
+ /usr/sparc64-linux-gnu/include/bits/timesize.h \
+ /usr/sparc64-linux-gnu/include/stdc-predef.h \
+ /usr/sparc64-linux-gnu/include/gnu/stubs.h \
+ /usr/sparc64-linux-gnu/include/gnu/stubs-64.h \
+ /usr/sparc64-linux-gnu/include/bits/stdint-uintn.h \
+ /usr/sparc64-linux-gnu/include/bits/types.h \
+ /usr/sparc64-linux-gnu/include/bits/typesizes.h \
+ /usr/sparc64-linux-gnu/include/bits/time64.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/socket.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/uio.h \
+ /usr/sparc64-linux-gnu/include/bits/in.h \
+ /usr/sparc64-linux-gnu/include/endian.h \
+ /usr/sparc64-linux-gnu/include/bits/endian.h \
+ /usr/sparc64-linux-gnu/include/bits/endianness.h \
+ /usr/sparc64-linux-gnu/include/bits/byteswap.h \
+ /usr/sparc64-linux-gnu/include/bits/uintn-identity.h \
+ /usr/sparc64-linux-gnu/include/netinet/in_systm.h \
+ /usr/lib/gcc-cross/sparc64-linux-gnu/14/include/stdint.h \
+ /usr/lib/gcc-cross/sparc64-linux-gnu/14/include/stdint-gcc.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/stand.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/stat.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/time.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/timespec.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/stdarg.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/saioctl.h \
  /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/saerrno.h \
- /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/errno.h
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/sys/errno.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/net.h \
+ /home/kakwa/Geek/GitHub/silly-sunv100-server/ofwboot/deps/lib/libsa/iodesc.h
