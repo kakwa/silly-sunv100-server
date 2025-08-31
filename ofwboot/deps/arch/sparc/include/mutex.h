@@ -1,11 +1,11 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: mutex.h,v 1.13 2023/07/12 12:50:13 riastradh Exp $	*/
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 2002, 2006 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
- * by Klaus Klein.
+ * by Jason R. Thorpe and Andrew Doran.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,9 +29,45 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#ifndef _SPARC_MUTEX_H_
+#define	_SPARC_MUTEX_H_
 
-#include <deps/sys/stdint.h>
+#include <sys/types.h>
 
-#endif /* !_SYS_STDINT_H_ */
+#ifdef __MUTEX_PRIVATE
+#include <machine/intr.h>
+
+#include "psl.h"
+#endif
+
+struct kmutex {
+	union {
+		volatile uintptr_t	mtxa_owner;
+#ifdef __MUTEX_PRIVATE
+		struct {
+			volatile uint8_t	mtxs_dummy;
+			ipl_cookie_t		mtxs_ipl;
+                        __cpu_simple_lock_t	mtxs_lock;
+			volatile uint8_t	mtxs_unused;
+		} s;
+#endif
+	} u;
+};
+
+#ifdef __MUTEX_PRIVATE
+
+#define	mtx_owner 			u.mtxa_owner
+#define	mtx_ipl 			u.s.mtxs_ipl
+#define	mtx_lock			u.s.mtxs_lock
+
+#define	__HAVE_SIMPLE_MUTEXES		1
+
+#define	MUTEX_CAS(p, o, n)		\
+    (_atomic_cas_ulong((volatile unsigned long *)(p), (o), (n)) == (o))
+
+unsigned long	_atomic_cas_ulong(volatile unsigned long *,
+    unsigned long, unsigned long);
+
+#endif	/* __MUTEX_PRIVATE */
+
+#endif /* _SPARC_MUTEX_H_ */

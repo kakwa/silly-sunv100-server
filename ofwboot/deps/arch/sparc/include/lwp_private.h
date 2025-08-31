@@ -1,7 +1,7 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: lwp_private.h,v 1.1 2024/11/30 01:04:14 christos Exp $	*/
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 2001 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
@@ -29,9 +29,23 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#ifndef _SPARC_LWP_PRIVATE_H_
+#define	_SPARC_LWP_PRIVATE_H_
 
-#include <deps/sys/stdint.h>
+#include <sys/tls.h>
 
-#endif /* !_SYS_STDINT_H_ */
+__BEGIN_DECLS
+
+static __inline void *
+__lwp_getprivate_fast(void)
+{
+	register void *__tmp;
+
+	__asm volatile("mov %%g7, %0" : "=r" (__tmp));
+
+	return __tmp;
+}
+
+__END_DECLS
+
+#endif	/* !_SPARC_LWP_PRIVATE_H_ */

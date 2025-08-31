@@ -61,10 +61,10 @@ RELOC=		100000
 
 ENTRY=		_start
 
+CPPFLAGS+=	-I${S}
 CPPFLAGS+=	-I${CURDIR}/../../.. -I${CURDIR}/../../../.. -I${CURDIR} -I.
 CPPFLAGS+=	-I${CURDIR}/../../../../../common/include
 CPPFLAGS+=	-DRELOC=0x${RELOC}
-CPPFLAGS+=	-I${S}
 CPPFLAGS+=	-I${CURDIR}
 
 #
@@ -76,27 +76,39 @@ CPPFLAGS+=	-DSPARC_BOOT_UFS
 CPPFLAGS+=	-DSPARC_BOOT_NFS
 CPPFLAGS+=	-DSPARC_BOOT_CD9660
 
-### find out what to use for libkern
+### find out what to use for libkern (fallback to empty if not available)
+.if exists("${S}/lib/libkern/Makefile.inc")
 KERN_AS=	library
 .include "${S}/lib/libkern/Makefile.inc"
 LIBKERN=	${KERNLIB}
+.else
+LIBKERN=
+.endif
 
-### find out what to use for libz
+### find out what to use for libz (fallback to empty if not available)
+.if exists("${S}/lib/libz/Makefile.inc")
 Z_AS=		library
 .include "${S}/lib/libz/Makefile.inc"
 LIBZ=		${ZLIB}
+.else
+LIBZ=
+.endif
 
 ### find out what to use for libsa
 SA_AS=		library
-SAMISCMAKEFLAGS= SA_USE_LOADFILE=yes SA_USE_CREAD=yes
-SAMISCCPPFLAGS+= -DCOMPAT_SOLARIS_UFS
+SAMISCMAKEFLAGS=	SA_USE_LOADFILE=yes SA_USE_CREAD=yes
+SAMISCCPPFLAGS+=	-DCOMPAT_SOLARIS_UFS
 .include "${S}/lib/libsa/Makefile.inc"
 LIBSA=		${SALIB}
 
+.if exists("${S}/conf/newvers_stand.mk")
 .include "${S}/conf/newvers_stand.mk"
+.endif
 
 .include <bsd.own.mk>
-.include <bsd.klinks.mk>
+.if exists("${CURDIR}/bsd.klinks.mk")
+.include "${CURDIR}/bsd.klinks.mk"
+.endif
 
 .if CROSS
 ${PROG}: ${OBJS} ${LIBSA} ${LIBZ} ${LIBKERN}

@@ -1,11 +1,8 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: cpuset.h,v 1.8 2008/04/28 20:23:37 martin Exp $ */
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 2004 The NetBSD Foundation, Inc.
  * All rights reserved.
- *
- * This code is derived from software contributed to The NetBSD Foundation
- * by Klaus Klein.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,9 +26,27 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#ifndef _SPARC64_CPUSET_H_
+#define	_SPARC64_CPUSET_H_
 
-#include <deps/sys/stdint.h>
+#define	CPUSET_MAXNUMCPU	64
+typedef	uint64_t sparc64_cpuset_t;
+extern volatile sparc64_cpuset_t cpus_active;
 
-#endif /* !_SYS_STDINT_H_ */
+#define	CPUSET_SINGLE(cpu)		((sparc64_cpuset_t)1 << (cpu))
+
+#define	CPUSET_ADD(set, cpu)		((set) |= CPUSET_SINGLE(cpu))
+#define	CPUSET_DEL(set, cpu)		((set) &= ~CPUSET_SINGLE(cpu))
+#define	CPUSET_SUB(set1, set2)		((set1) &= ~(set2))
+
+#define	CPUSET_EXCEPT(set, cpu)		((set) & ~CPUSET_SINGLE(cpu))
+
+#define	CPUSET_HAS(set, cpu)		((set) & CPUSET_SINGLE(cpu))
+#define	CPUSET_NEXT(set)		(ffs(set) - 1)
+
+#define	CPUSET_EMPTY(set)		((set) == (sparc64_cpuset_t)0)
+#define	CPUSET_EQUAL(set1, set2)	((set1) == (set2))
+#define	CPUSET_CLEAR(set)		((set) = (sparc64_cpuset_t)0)
+#define	CPUSET_ASSIGN(set1, set2)	((set1) = (set2))
+
+#endif /* _SPARC64_CPUSET_H_ */

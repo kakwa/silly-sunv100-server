@@ -1,11 +1,11 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: sunos_machdep.h,v 1.3 2008/04/28 20:23:36 martin Exp $	 */
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 2005 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
- * by Klaus Klein.
+ * by Christos Zoulas.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,9 +29,9 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#ifndef	_SPARC_SUNOS_MACHDEP_H_
+#define	_SPARC_SUNOS_MACHDEP_H_
 
-#include <deps/sys/stdint.h>
+#define sunos_syscall_intern syscall_intern
 
-#endif /* !_SYS_STDINT_H_ */
+#endif /* !_SPARC_SUNOS_MACHDEP_H_ */

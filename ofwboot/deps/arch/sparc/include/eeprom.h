@@ -1,11 +1,11 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: eeprom.h,v 1.10 2014/10/18 08:33:26 snj Exp $	*/
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 1996 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
- * by Klaus Klein.
+ * by Gordon W. Ross.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,9 +29,24 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#ifndef _MACHINE_EEPROM_H_
+#define	_MACHINE_EEPROM_H_
 
-#include <deps/sys/stdint.h>
+#include <dev/sun/eeprom.h>
 
-#endif /* !_SYS_STDINT_H_ */
+/*
+ * The size of the eeprom on machines with the old clock is 2k.  However,
+ * on machines with the new clock (and the `eeprom' in the nvram area)
+ * there are only 2040 bytes available. (???).  Since we really only
+ * care about the `diagnostic' area, we'll use its size when dealing
+ * with the eeprom in general.
+ */
+#define EEPROM_SIZE		0x500
+
+#ifdef	_KERNEL
+extern	char *eeprom_va;
+int	eeprom_uio(struct uio *);
+#define DEV_EEPROM      11      /* minor device 11 is eeprom */
+#endif	/* _KERNEL */
+
+#endif /* _MACHINE_EEPROM_H_ */

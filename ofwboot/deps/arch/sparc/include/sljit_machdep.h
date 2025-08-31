@@ -1,11 +1,8 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: sljit_machdep.h,v 1.2 2016/05/30 09:05:32 nakayama Exp $	*/
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 2012-2013 The NetBSD Foundation, Inc.
  * All rights reserved.
- *
- * This code is derived from software contributed to The NetBSD Foundation
- * by Klaus Klein.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,9 +26,15 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#ifndef _SPARC_SLJITARCH_H
+#define _SPARC_SLJITARCH_H
 
-#include <deps/sys/stdint.h>
+#ifndef _LP64
+#define SLJIT_CONFIG_SPARC_32 1
+#endif
 
-#endif /* !_SYS_STDINT_H_ */
+#define SLJIT_CACHE_FLUSH(from, to) \
+	sparc_cache_flush((sljit_ins *)(from), (sljit_ins *)(to))
+#define SLJIT_CACHE_FLUSH_OWN_IMPL 1
+
+#endif

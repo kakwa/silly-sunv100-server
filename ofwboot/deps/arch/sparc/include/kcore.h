@@ -1,11 +1,11 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: kcore.h,v 1.4 2008/04/28 20:23:36 martin Exp $	*/
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 1996 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
- * by Klaus Klein.
+ * by Paul Kranenburg.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,9 +29,25 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+/*
+ * The layout of a kernel core on the dump device is as follows:
+ *	a `struct kcore_seg' of type CORE_CPU
+ *	a `struct cpu_kcore_hdr'
+ *	an array of `cpu_kcore_hdr.nmemseg' phys_ram_seg_t's
+ *	an array of `cpu_kcore_hdr.nsegmap' segmap structures
+ *	an array of `cpu_kcore_hdr.npmegs' PTEs (zero of these on sun4ms).
+ */
 
-#include <deps/sys/stdint.h>
-
-#endif /* !_SYS_STDINT_H_ */
+typedef struct cpu_kcore_hdr {
+	int	cputype;		/* CPU type associated with this dump */
+	u_long	kernbase;		/* copy of KERNBASE goes here */
+	int	nmemseg;		/* # of physical memory segments */
+	u_long	memsegoffset;		/* start of memseg array (relative */
+					/*  to the start of this header) */
+	int	nsegmap;		/* # of segmaps following */
+	u_long	segmapoffset;		/* start of segmap array (relative */
+					/*  to the start of this header) */
+	int	npmeg;			/* # of PMEGs; [sun4/sun4c] only */
+	u_long	pmegoffset;		/* start of pmeg array (relative */
+					/*  to the start of this header) */
+} cpu_kcore_hdr_t;

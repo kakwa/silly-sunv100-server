@@ -1,11 +1,11 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: loadfile_machdep.h,v 1.11 2014/08/06 21:57:51 joerg Exp $	 */
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 1999 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
- * by Klaus Klein.
+ * by Christos Zoulas.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,9 +29,36 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#define LOAD_KERNEL	LOAD_ALL
+#define COUNT_KERNEL	COUNT_ALL
 
-#include <deps/sys/stdint.h>
-
-#endif /* !_SYS_STDINT_H_ */
+#ifdef _STANDALONE
+#define LOADADDR(a)		(a)
+#define ALIGNENTRY(a)		((u_long)(a))
+#define READ(f, b, c)		read((f), (void *)LOADADDR(b), (c))
+#define BCOPY(s, d, c)		memcpy((void *)LOADADDR(d), (void *)(s), (c))
+#define BZERO(d, c)		memset((void *)LOADADDR(d), 0, (c))
+#define	WARN(a)			do { \
+					(void)printf a; \
+					if (errno) \
+						(void)printf(": %s\n", \
+						             strerror(errno)); \
+					else \
+						(void)printf("\n"); \
+				} while(/* CONSTCOND */0)
+#define PROGRESS(a)		(void) printf a
+#define ALLOC(a)		alloc(a)
+#define DEALLOC(a, b)		dealloc(a, b)
+#define OKMAGIC(a)		((a) == OMAGIC)
+#else
+#define LOADADDR(a)		(((u_long)(a)) + (u_long)offset)
+#define ALIGNENTRY(a)		((u_long)(a))
+#define READ(f, b, c)		read((f), (void *)LOADADDR(b), (c))
+#define BCOPY(s, d, c)		memcpy((void *)LOADADDR(d), (void *)(s), (c))
+#define BZERO(d, c)		memset((void *)LOADADDR(d), 0, (c))
+#define WARN(a)			warn a
+#define PROGRESS(a)		/* nothing */
+#define ALLOC(a)		malloc(a)
+#define FREE(a, b)		free(a)
+#define OKMAGIC(a)		((a) == OMAGIC)
+#endif

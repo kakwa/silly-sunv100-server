@@ -1,11 +1,11 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/* $NetBSD: net.h,v 1.3 2012/07/16 11:26:27 tsutsui Exp $ */
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 2011 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
- * by Klaus Klein.
+ * by 
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,9 +29,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#ifndef _OFWBOOT_NET_H
+#define _OFWBOOT_NET_H
 
-#include <deps/sys/stdint.h>
+int	net_open(struct of_dev *);
+int	net_close(struct of_dev *);
+int	net_tftp_bootp(int **);
+int	net_mountroot(void);
 
-#endif /* !_SYS_STDINT_H_ */
+#endif /* _OFWBOOT_NET_H */

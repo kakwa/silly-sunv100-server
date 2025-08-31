@@ -1,11 +1,11 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: cpu_counter.h,v 1.8 2009/05/16 19:15:34 nakayama Exp $	*/
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 2002 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
- * by Klaus Klein.
+ * by Martin Husemann.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,9 +29,40 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#ifndef _SPARC64_CPU_COUNTER_H_
+#define _SPARC64_CPU_COUNTER_H_
 
-#include <deps/sys/stdint.h>
+/*
+ * Machine-specific support for CPU counter.
+ */
 
-#endif /* !_SYS_STDINT_H_ */
+#ifdef _KERNEL
+
+#include <machine/cpu.h>
+
+#define	cpu_hascounter()	(1)
+
+static __inline uint64_t
+cpu_counter(void)
+{
+
+	return (gettick());
+}
+
+static __inline uint32_t
+cpu_counter32(void)
+{
+
+	return (gettick() & 0xffffffffUL);
+}
+
+static __inline uint64_t
+cpu_frequency(struct cpu_info *ci)
+{
+
+	return (ci->ci_cpu_clockrate[0]);
+}
+
+#endif /* _KERNEL */
+
+#endif /* !_SPARC64_CPU_COUNTER_H_ */

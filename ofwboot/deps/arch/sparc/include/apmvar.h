@@ -1,11 +1,10 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
-
+/*	$NetBSD: apmvar.h,v 1.3 2008/04/28 20:23:36 martin Exp $	*/
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 1995 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
- * by Klaus Klein.
+ * by John Kohl.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,10 +27,10 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+#ifndef __SPARC_APM_H__
+#define __SPARC_APM_H__
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#include <dev/apm/apmbios.h>
+#include <dev/apm/apmio.h>
 
-#include <deps/sys/stdint.h>
-
-#endif /* !_SYS_STDINT_H_ */
+#endif /* __SPARC_APM_H__ */

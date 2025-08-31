@@ -1,11 +1,11 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: tctrl.h,v 1.5 2015/09/07 03:49:46 dholland Exp $	*/
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 1998 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
- * by Klaus Klein.
+ * by Tim Rightnour.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,10 +28,35 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+#ifndef _MACHINE_TCTRL_H
+#define	_MACHINE_TCTRL_H
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#include <sys/ioccom.h>
 
-#include <deps/sys/stdint.h>
+struct tctrl_req {
+	uint8_t        cmdbuf[16];
+	uint8_t        cmdlen;
+	uint8_t        cmdoff;
+	struct proc     *p;
+	uint8_t        rspbuf[16];
+	uint8_t        rspoff;
+	uint8_t        rsplen;
+};
+typedef struct tctrl_req tctrl_req_t;
 
-#endif /* !_SYS_STDINT_H_ */
+struct tctrl_pwr {
+	int	rw;
+	int	state;
+};
+typedef struct tctrl_pwr tctrl_pwr_t;
+
+/* Port power state */
+#define PORT_PWR_ON		0x00	/* Always on */
+#define PORT_PWR_STANDBY	0x01	/* On when open */
+#define PORT_PWR_OFF		0x02	/* Always off */
+
+#define TCTRL_CMD_REQ     _IOWR('C', 0, struct tctrl_req)
+#define TCTRL_SERIAL_PWR  _IOWR('C', 1, struct tctrl_pwr)
+#define TCTRL_MODEM_PWR   _IOWR('C', 2, struct tctrl_pwr)
+
+#endif /* _MACHINE_TCTRL_H */

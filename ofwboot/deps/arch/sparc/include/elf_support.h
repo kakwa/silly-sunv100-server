@@ -1,11 +1,8 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: elf_support.h,v 1.1 2018/03/29 13:23:39 joerg Exp $	*/
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 2018 The NetBSD Foundation, Inc.
  * All rights reserved.
- *
- * This code is derived from software contributed to The NetBSD Foundation
- * by Klaus Klein.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,10 +25,40 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+#ifndef _SPARC_ELF_SUPPORT_H
+#define _SPARC_ELF_SUPPORT_H
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+static inline void
+sparc_write_branch(void *where_, void *target)
+{
+	const unsigned int BAA     = 0x30800000U; /* ba,a  (offset / 4) */
+	const unsigned int SETHI   = 0x03000000U; /* sethi %hi(0), %g1 */
+	const unsigned int JMP     = 0x81c06000U; /* jmpl  %g1+%lo(0), %g0 */
 
-#include <deps/sys/stdint.h>
+	unsigned int *where = (unsigned int *)where_;
+	unsigned long value = (unsigned long)target;
+	unsigned long offset = value - (unsigned long)where;
 
-#endif /* !_SYS_STDINT_H_ */
+#define	HIVAL(v, s)	(((v) >> (s)) & 0x003fffffU)
+#define	LOVAL(v, s)	(((v) >> (s)) & 0x000003ffU)
+	if (offset + 0x800000 <= 0x7ffffc) {
+		/* Displacement is within 8MB, use a direct branch. */
+		where[0] = BAA | ((offset >> 2) & 0x3fffff);
+		__asm volatile("iflush %0+0" : : "r" (where));
+		return;
+	}
+
+	/*
+	 * The absolute address is a 32bit value.
+	 * This can be encoded as:
+	 *	sethi	%hi(value), %g1
+	 *	jmp	%g1+%lo(value)
+	 */
+	where[1] = JMP   | LOVAL(value, 0);
+	__asm volatile("iflush %0+4" : : "r" (where));
+	where[0] = SETHI | HIVAL(value, 10);
+	__asm volatile("iflush %0+0" : : "r" (where));
+#undef	HIVAL
+#undef	LOVAL
+}
+#endif

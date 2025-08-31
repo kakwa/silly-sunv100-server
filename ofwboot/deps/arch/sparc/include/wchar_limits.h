@@ -1,7 +1,7 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: wchar_limits.h,v 1.3 2008/04/28 20:23:36 martin Exp $	*/
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 2004 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
@@ -29,9 +29,19 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#ifndef _SPARC_WCHAR_LIMITS_H_
+#define _SPARC_WCHAR_LIMITS_H_
 
-#include <deps/sys/stdint.h>
+/*
+ * 7.18.3 Limits of other integer types
+ */
 
-#endif /* !_SYS_STDINT_H_ */
+/* limits of wchar_t */
+#define	WCHAR_MIN	(-0x7fffffff-1)			/* wchar_t	  */
+#define	WCHAR_MAX	0x7fffffff			/* wchar_t	  */
+
+/* limits of wint_t */
+#define	WINT_MIN	(-0x7fffffff-1)			/* wint_t	  */
+#define	WINT_MAX	0x7fffffff			/* wint_t	  */
+
+#endif /* !_SPARC_WCHAR_LIMITS_H_ */

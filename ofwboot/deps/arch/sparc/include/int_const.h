@@ -1,7 +1,7 @@
-/*	$NetBSD: stdint.h,v 1.8 2018/11/06 16:26:44 maya Exp $	*/
+/*	$NetBSD: int_const.h,v 1.4 2014/08/13 22:51:59 matt Exp $	*/
 
 /*-
- * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.
+ * Copyright (c) 2001 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
@@ -29,9 +29,46 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_STDINT_H_
-#define _SYS_STDINT_H_
+#ifndef _SPARC_INT_CONST_H_
+#define _SPARC_INT_CONST_H_
 
-#include <deps/sys/stdint.h>
+#ifdef __INTMAX_C_SUFFIX__
+#include <sys/common_int_const.h>
+#else
+/*
+ * 7.18.4 Macros for integer constants
+ */
 
-#endif /* !_SYS_STDINT_H_ */
+/* 7.18.4.1 Macros for minimum-width integer constants */
+
+#define	INT8_C(c)	c
+#define	INT16_C(c)	c
+#define	INT32_C(c)	c
+#ifdef __arch64__
+#define	INT64_C(c)	c ## L
+#else
+#define	INT64_C(c)	c ## LL
+#endif
+
+#define	UINT8_C(c)	c
+#define	UINT16_C(c)	c
+#define	UINT32_C(c)	c ## U
+#ifdef __arch64__
+#define	UINT64_C(c)	c ## UL
+#else
+#define	UINT64_C(c)	c ## ULL
+#endif
+
+/* 7.18.4.2 Macros for greatest-width integer constants */
+
+#ifdef __arch64__
+#define	INTMAX_C(c)	c ## L
+#define	UINTMAX_C(c)	c ## UL
+#else
+#define	INTMAX_C(c)	c ## LL
+#define	UINTMAX_C(c)	c ## ULL
+#endif
+
+#endif /* !__INTMAX_C_SUFFIX__ */
+
+#endif /* !_SPARC_INT_CONST_H_ */
