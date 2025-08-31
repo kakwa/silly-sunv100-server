@@ -41,19 +41,11 @@
 
 #include <sys/featuretest.h>
 
-/* If machine headers are unavailable, pull basics from deps/include. */
-#if __has_include(<machine/types.h>)
+/* Machine type dependent parameters. */
 #include <machine/types.h>
-#else
-#include <deps/include/param.h>
-#endif
 
-#if __has_include(<machine/ansi.h>)
 #include <machine/ansi.h>
-#endif
-#if __has_include(<machine/int_types.h>)
 #include <machine/int_types.h>
-#endif
 
 
 #include <sys/ansi.h>
@@ -103,9 +95,7 @@ typedef	uint16_t	u_int16_t;
 typedef	uint32_t	u_int32_t;
 typedef	uint64_t	u_int64_t;
 
-#if __has_include(<machine/endian.h>)
 #include <machine/endian.h>
-#endif
 
 #if defined(_NETBSD_SOURCE)
 typedef	unsigned char	u_char;

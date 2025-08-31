@@ -73,10 +73,12 @@
 #define __has_extension		__has_feature /* Compat with pre-3.0 Clang */
 #endif
 
-/* Prefer imported NetBSD headers that include MD bits */
-#include <deps/sys/cdefs.h>
-#undef _SYS_CDEFS_H_
-#define _SYS_CDEFS_H_
+#include <machine/cdefs.h>
+#ifdef __ELF__
+#include <sys/cdefs_elf.h>
+#else
+#include <sys/cdefs_aout.h>
+#endif
 
 #ifdef __GNUC__
 #define	__strict_weak_alias(alias,sym)					\
@@ -503,7 +505,7 @@
 #error "No function renaming possible"
 #endif /* __GNUC__ */
 #else /* _STANDALONE || _KERNEL */
-#define	__RENAME(x)	/* no renaming in kernel/standalone environment */
+#define	__RENAME(x)	no renaming in kernel/standalone environment
 #endif
 
 /*
