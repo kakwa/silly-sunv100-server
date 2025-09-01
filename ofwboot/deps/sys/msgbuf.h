@@ -1,4 +1,5 @@
-/*	$NetBSD: msgbuf.h,v 1.18 2022/10/26 23:28:43 riastradh Exp $	*/
+/*	$OpenBSD: msgbuf.h,v 1.13 2020/10/25 10:55:42 visa Exp $	*/
+/*	$NetBSD: msgbuf.h,v 1.8 1995/03/26 20:24:27 jtc Exp $	*/
 
 /*
  * Copyright (c) 1981, 1984, 1993
@@ -31,33 +32,27 @@
  *	@(#)msgbuf.h	8.1 (Berkeley) 6/2/93
  */
 
-#ifndef _SYS_MSGBUF_H_
-#define _SYS_MSGBUF_H_
-
-struct	kern_msgbuf {
+/*
+ * Locking:
+ *	I	immutable after creation
+ *	L	log_mtx
+ *	Lw	log_mtx for writing
+ */
+struct	msgbuf {
 #define	MSG_MAGIC	0x063061
-	long	msg_magic;
-	long	msg_bufx;		/* write pointer */
-	long	msg_bufr;		/* read pointer */
-	long	msg_bufs;		/* real msg_bufc size (bytes) */
-	char	msg_bufc[1];		/* buffer */
+	long	msg_magic;		/* [I] buffer magic value */
+	long	msg_bufx;		/* [L] write pointer */
+	long	msg_bufr;		/* [L] read pointer */
+	long	msg_bufs;		/* [I] real msg_bufc size (bytes) */
+	long	msg_bufd;		/* [L] number of dropped bytes */
+	char	msg_bufc[1];		/* [Lw] buffer */
 };
-
 #ifdef _KERNEL
-extern int	msgbufmapped;		/* is the message buffer mapped */
-extern int	msgbufenabled;		/* is logging to the buffer enabled */
-extern struct	kern_msgbuf *msgbufp;	/* the mapped buffer, itself. */
-extern int	log_open;		/* is /dev/klog open? */
+#define CONSBUFSIZE	(16 * 1024)	/* console message buffer size */
+extern struct msgbuf *msgbufp;
+extern struct msgbuf *consbufp;
 
-void	initmsgbuf(void *, size_t);
-void	loginit(void);
-void	logputchar(int);
-
-static __inline int
-logenabled(const struct kern_msgbuf *mbp)
-{
-	return msgbufenabled && mbp->msg_magic == MSG_MAGIC;
-}
+void	initmsgbuf(caddr_t buf, size_t bufsize);
+void	initconsbuf(void);
+void	msgbuf_putchar(struct msgbuf *, const char c);
 #endif
-
-#endif /* !_SYS_MSGBUF_H_ */

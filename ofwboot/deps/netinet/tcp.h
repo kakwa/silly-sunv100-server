@@ -1,4 +1,5 @@
-/*	$NetBSD: tcp.h,v 1.37 2021/02/03 18:13:13 roy Exp $	*/
+/*	$OpenBSD: tcp.h,v 1.24 2023/05/19 01:04:39 guenther Exp $	*/
+/*	$NetBSD: tcp.h,v 1.8 1995/04/17 05:32:58 cgd Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1993
@@ -32,146 +33,116 @@
  */
 
 #ifndef _NETINET_TCP_H_
-#define _NETINET_TCP_H_
+#define	_NETINET_TCP_H_
 
-#include <sys/featuretest.h>
+#include <sys/cdefs.h>
 
-#if defined(_NETBSD_SOURCE)
-#include <sys/types.h>
+#if __BSD_VISIBLE
 
-typedef uint32_t tcp_seq;
+typedef u_int32_t tcp_seq;
+
 /*
  * TCP header.
  * Per RFC 793, September, 1981.
- * Updated by RFC 3168, September, 2001.
  */
 struct tcphdr {
-	uint16_t th_sport;		/* source port */
-	uint16_t th_dport;		/* destination port */
+	u_int16_t th_sport;		/* source port */
+	u_int16_t th_dport;		/* destination port */
 	tcp_seq	  th_seq;		/* sequence number */
 	tcp_seq	  th_ack;		/* acknowledgement number */
-#if BYTE_ORDER == LITTLE_ENDIAN
-	/*LINTED non-portable bitfields*/
-	uint8_t  th_x2:4,		/* (unused) */
+#if _BYTE_ORDER == _LITTLE_ENDIAN
+	u_int32_t th_x2:4,		/* (unused) */
 		  th_off:4;		/* data offset */
 #endif
-#if BYTE_ORDER == BIG_ENDIAN
-	/*LINTED non-portable bitfields*/
-	uint8_t  th_off:4,		/* data offset */
+#if _BYTE_ORDER == _BIG_ENDIAN
+	u_int32_t th_off:4,		/* data offset */
 		  th_x2:4;		/* (unused) */
 #endif
-	uint8_t  th_flags;
-#define	TH_FIN	  0x01		/* Final: Set on the last segment */
-#define	TH_SYN	  0x02		/* Synchronization: New conn with dst port */
-#define	TH_RST	  0x04		/* Reset: Announce to peer conn terminated */
-#define	TH_PUSH	  0x08		/* Push: Immediately send, don't buffer seg */
-#define	TH_ACK	  0x10		/* Acknowledge: Part of connection establish */
-#define	TH_URG	  0x20		/* Urgent: send special marked segment now */
-#define	TH_ECE	  0x40		/* ECN Echo */
-#define	TH_CWR	  0x80		/* Congestion Window Reduced */
-	uint16_t th_win;			/* window */
-	uint16_t th_sum;			/* checksum */
-	uint16_t th_urp;			/* urgent pointer */
+	u_int8_t  th_flags;
+#define	TH_FIN	  0x01
+#define	TH_SYN	  0x02
+#define	TH_RST	  0x04
+#define	TH_PUSH	  0x08
+#define	TH_ACK	  0x10
+#define	TH_URG	  0x20
+#define	TH_ECE	  0x40
+#define	TH_CWR	  0x80
+	u_int16_t th_win;			/* window */
+	u_int16_t th_sum;			/* checksum */
+	u_int16_t th_urp;			/* urgent pointer */
 };
-#ifdef __CTASSERT
-__CTASSERT(sizeof(struct tcphdr) == 20);
-#endif
+#define th_reseqlen th_urp			/* TCP data length for
+						   resequencing/reassembly */
 
 #define	TCPOPT_EOL		0
-#define	   TCPOLEN_EOL			1
-#define	TCPOPT_PAD		0
-#define	   TCPOLEN_PAD			1
 #define	TCPOPT_NOP		1
-#define	   TCPOLEN_NOP			1
 #define	TCPOPT_MAXSEG		2
-#define	   TCPOLEN_MAXSEG		4
+#define	TCPOLEN_MAXSEG		4
 #define	TCPOPT_WINDOW		3
-#define	   TCPOLEN_WINDOW		3
+#define	TCPOLEN_WINDOW		3
 #define	TCPOPT_SACK_PERMITTED	4		/* Experimental */
-#define	   TCPOLEN_SACK_PERMITTED	2
+#define	TCPOLEN_SACK_PERMITTED	2
 #define	TCPOPT_SACK		5		/* Experimental */
+#define	TCPOLEN_SACK		8		/* 2*sizeof(tcp_seq) */
 #define	TCPOPT_TIMESTAMP	8
-#define	   TCPOLEN_TIMESTAMP		10
-#define	   TCPOLEN_TSTAMP_APPA		(TCPOLEN_TIMESTAMP+2) /* appendix A */
+#define	TCPOLEN_TIMESTAMP		10
+#define	TCPOLEN_TSTAMP_APPA		(TCPOLEN_TIMESTAMP+2) /* appendix A */
+#define	TCPOPT_SIGNATURE	19
+#define	TCPOLEN_SIGNATURE		18
+#define	TCPOLEN_SIGLEN		(TCPOLEN_SIGNATURE+2) /* padding */
 
-#define TCPOPT_TSTAMP_HDR	\
+#define	MAX_TCPOPTLEN		40	/* Absolute maximum TCP options len */
+
+#define	TCPOPT_TSTAMP_HDR	\
     (TCPOPT_NOP<<24|TCPOPT_NOP<<16|TCPOPT_TIMESTAMP<<8|TCPOLEN_TIMESTAMP)
 
-#define	TCPOPT_SIGNATURE	19		/* Keyed MD5: RFC 2385 */
-#define	   TCPOLEN_SIGNATURE		18
-#define    TCPOLEN_SIGLEN		(TCPOLEN_SIGNATURE+2) /* padding */
-
-#define MAX_TCPOPTLEN	40	/* max # bytes that go in options */
+/* Option definitions */
+#define	TCPOPT_SACK_PERMIT_HDR \
+(TCPOPT_NOP<<24|TCPOPT_NOP<<16|TCPOPT_SACK_PERMITTED<<8|TCPOLEN_SACK_PERMITTED)
+#define	TCPOPT_SACK_HDR   (TCPOPT_NOP<<24|TCPOPT_NOP<<16|TCPOPT_SACK<<8)
+/* Miscellaneous constants */
+#define	MAX_SACK_BLKS	6	/* Max # SACK blocks stored at sender side */
+#define	TCP_MAX_SACK	3	/* Max # SACKs sent in any segment */
+#define	TCP_SACKHOLE_LIMIT 128	/* Max # SACK holes per connection */
 
 /*
  * Default maximum segment size for TCP.
- * This is defined by RFC 1112 Sec 4.2.2.6.
+ * With an IP MSS of 576, this is 536,
+ * but 512 is probably more convenient.
+ * This should be defined as min(512, IP_MSS - sizeof (struct tcpiphdr)).
  */
-#define	TCP_MSS		536
-
-#define	TCP_MINMSS	216
+#define	TCP_MSS		512
 
 #define	TCP_MAXWIN	65535	/* largest value for (unscaled) window */
 
 #define	TCP_MAX_WINSHIFT	14	/* maximum window shift */
 
-#define	TCP_MAXBURST	4	/* maximum segments in a burst */
-
-#endif /* _NETBSD_SOURCE */
-
 /*
- * User-settable options (used with setsockopt).
+ * The TCP_INFO socket option comes from the Linux 2.6 TCP API, and permits
+ * the caller to query certain information about the state of a TCP
+ * connection.  Provide an overlapping set of fields with the Linux
+ * implementation, but at the same time add a lot of OpenBSD specific
+ * extra information.
  */
-#define	TCP_NODELAY	1	/* don't delay send to coalesce packets */
-#define	TCP_MAXSEG	2	/* set maximum segment size */
-#define	TCP_KEEPIDLE	3
-#ifdef notyet
-#define	TCP_NOPUSH	4	/* reserved for FreeBSD compat */
-#endif
-#define	TCP_KEEPINTVL	5
-#define	TCP_KEEPCNT	6
-#define	TCP_KEEPINIT	7
-#ifdef notyet
-#define	TCP_NOOPT	8	/* reserved for FreeBSD compat */
-#endif
-#define	TCP_INFO	9	/* retrieve tcp_info structure */
-#define	TCP_MD5SIG	0x10	/* use MD5 digests (RFC2385) */
-#define	TCP_CONGCTL	0x20	/* selected congestion control */
-
+struct tcp_info {
+	uint8_t		tcpi_state;		/* TCP FSM state. */
+	uint8_t		__tcpi_ca_state;
+	uint8_t		__tcpi_retransmits;
+	uint8_t		__tcpi_probes;
+	uint8_t		__tcpi_backoff;
+	uint8_t		tcpi_options;		/* Options enabled on conn. */
 #define	TCPI_OPT_TIMESTAMPS	0x01
 #define	TCPI_OPT_SACK		0x02
 #define	TCPI_OPT_WSCALE		0x04
 #define	TCPI_OPT_ECN		0x08
 #define	TCPI_OPT_TOE		0x10
+	uint8_t		tcpi_snd_wscale;	/* RFC1323 send shift value. */
+	uint8_t		tcpi_rcv_wscale;	/* RFC1323 recv shift value. */
 
-/*
- * The TCP_INFO socket option comes from the Linux 2.6 TCP API, and permits
- * the caller to query certain information about the state of a TCP
- * connection.  We provide an overlapping set of fields with the Linux
- * implementation, but since this is a fixed size structure, room has been
- * left for growth.  In order to maximize potential future compatibility with
- * the Linux API, the same variable names and order have been adopted, and
- * padding left to make room for omitted fields in case they are added later.
- *
- * XXX: This is currently an unstable ABI/API, in that it is expected to
- * change.
- */
-struct tcp_info {
-	uint8_t		tcpi_state; /* TCP FSM state. */
-	uint8_t		__tcpi_ca_state;
-	uint8_t		__tcpi_retransmits;
-	uint8_t		__tcpi_probes;
-	uint8_t		__tcpi_backoff;
-	uint8_t		tcpi_options;	       /* Options enabled on conn. */
-	/*LINTED: non-portable bitfield*/
-	uint8_t		tcpi_snd_wscale:4,	/* RFC1323 send shift value. */
-	/*LINTED: non-portable bitfield*/
-			tcpi_rcv_wscale:4; /* RFC1323 recv shift value. */
-
-	uint32_t	tcpi_rto;		/* Retransmission timeout (usec). */
+	uint32_t	tcpi_rto;	   /* Retransmission timeout (usec). */
 	uint32_t	__tcpi_ato;
 	uint32_t	tcpi_snd_mss;		/* Max segment size for send. */
-	uint32_t	tcpi_rcv_mss;		/* Max segment size for receive. */
+	uint32_t	tcpi_rcv_mss;		/* Max segment size for recv. */
 
 	uint32_t	__tcpi_unacked;
 	uint32_t	__tcpi_sacked;
@@ -180,10 +151,10 @@ struct tcp_info {
 	uint32_t	__tcpi_fackets;
 
 	/* Times; measurements in usecs. */
-	uint32_t	__tcpi_last_data_sent;
-	uint32_t	__tcpi_last_ack_sent;	/* Also unimpl. on Linux? */
-	uint32_t	tcpi_last_data_recv;	/* Time since last recv data. */
-	uint32_t	__tcpi_last_ack_recv;
+	uint32_t	tcpi_last_data_sent;	/* since last sent data. */
+	uint32_t	tcpi_last_ack_sent;	/* since last sent ack. */
+	uint32_t	tcpi_last_data_recv;	/* since last recv data. */
+	uint32_t	tcpi_last_ack_recv;	/* since last recv ack. */
 
 	/* Metrics; variable units. */
 	uint32_t	__tcpi_pmtu;
@@ -198,18 +169,54 @@ struct tcp_info {
 	uint32_t	__tcpi_rcv_rtt;
 	uint32_t	tcpi_rcv_space;		/* Advertised recv window. */
 
+	/*
+	 * Members below this point are only set if process is privileged,
+	 * otherwise values will be 0.
+	 */
+
 	/* FreeBSD/NetBSD extensions to tcp_info. */
 	uint32_t	tcpi_snd_wnd;		/* Advertised send window. */
-	uint32_t	tcpi_snd_bwnd;		/* No longer used. */
 	uint32_t	tcpi_snd_nxt;		/* Next egress seqno */
 	uint32_t	tcpi_rcv_nxt;		/* Next ingress seqno */
 	uint32_t	tcpi_toe_tid;		/* HWTID for TOE endpoints */
 	uint32_t	tcpi_snd_rexmitpack;	/* Retransmitted packets */
 	uint32_t	tcpi_rcv_ooopack;	/* Out-of-order packets */
 	uint32_t	tcpi_snd_zerowin;	/* Zero-sized windows sent */
-	
-	/* Padding to grow without breaking ABI. */
-	uint32_t	__tcpi_pad[26];		/* Padding. */
+
+	/* OpenBSD extensions */
+	uint32_t	tcpi_rttmin;
+	uint32_t	tcpi_max_sndwnd;
+	uint32_t	tcpi_rcv_adv;
+	uint32_t	tcpi_rcv_up;
+	uint32_t	tcpi_snd_una;
+	uint32_t	tcpi_snd_up;
+	uint32_t	tcpi_snd_wl1;
+	uint32_t	tcpi_snd_wl2;
+	uint32_t	tcpi_snd_max;
+	uint32_t	tcpi_ts_recent;
+	uint32_t	tcpi_ts_recent_age;
+	uint32_t	tcpi_rfbuf_cnt;
+	uint32_t	tcpi_rfbuf_ts;
+	uint32_t	tcpi_so_rcv_sb_cc;
+	uint32_t	tcpi_so_rcv_sb_hiwat;
+	uint32_t	tcpi_so_rcv_sb_lowat;
+	uint32_t	tcpi_so_rcv_sb_wat;
+	uint32_t	tcpi_so_snd_sb_cc;
+	uint32_t	tcpi_so_snd_sb_hiwat;
+	uint32_t	tcpi_so_snd_sb_lowat;
+	uint32_t	tcpi_so_snd_sb_wat;
 };
 
-#endif /* !_NETINET_TCP_H_ */
+#endif /* __BSD_VISIBLE */
+
+/*
+ * User-settable options (used with setsockopt).
+ */
+#define	TCP_NODELAY		0x01   /* don't delay send to coalesce pkts */
+#define	TCP_MAXSEG		0x02   /* set maximum segment size */
+#define	TCP_MD5SIG		0x04   /* enable TCP MD5 signature option */
+#define	TCP_SACK_ENABLE		0x08   /* enable SACKs (if disabled by def.) */
+#define	TCP_INFO		0x09   /* retrieve tcp_info structure */
+#define	TCP_NOPUSH		0x10   /* don't push last block of write */
+
+#endif /* _NETINET_TCP_H_ */

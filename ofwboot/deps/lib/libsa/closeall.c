@@ -1,4 +1,5 @@
-/*	$NetBSD: closeall.c,v 1.5 2007/11/24 13:20:54 isaki Exp $	*/
+/*	$OpenBSD: closeall.c,v 1.5 2003/08/11 06:23:09 deraadt Exp $	*/
+/*	$NetBSD: close.c,v 1.5 1995/09/06 19:53:29 pk Exp $	*/
 
 /*-
  * Copyright (c) 1993

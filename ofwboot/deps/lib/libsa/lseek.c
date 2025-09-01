@@ -1,4 +1,5 @@
-/*	$NetBSD: lseek.c,v 1.11 2007/12/02 04:59:26 tsutsui Exp $	*/
+/*	$OpenBSD: lseek.c,v 1.7 2003/08/11 06:23:09 deraadt Exp $	*/
+/*	$NetBSD: lseek.c,v 1.3 1996/06/21 20:09:03 pk Exp $	*/
 
 /*-
  * Copyright (c) 1993
@@ -71,14 +72,11 @@ olseek(int fd, off_t offset, int where)
 {
 	struct open_file *f = &files[fd];
 
-#if !defined(LIBSA_NO_FD_CHECKING)
-	if ((unsigned int)fd >= SOPEN_MAX || f->f_flags == 0) {
+	if ((unsigned)fd >= SOPEN_MAX || f->f_flags == 0) {
 		errno = EBADF;
-		return -1;
+		return (-1);
 	}
-#endif
 
-#if !defined(LIBSA_NO_RAW_ACCESS)
 	if (f->f_flags & F_RAW) {
 		/*
 		 * On RAW devices, update internal offset.
@@ -93,11 +91,10 @@ olseek(int fd, off_t offset, int where)
 		case SEEK_END:
 		default:
 			errno = EOFFSET;
-			return -1;
+			return (-1);
 		}
-		return f->f_offset;
+		return (f->f_offset);
 	}
-#endif
 
-	return FS_SEEK(f->f_ops)(f, offset, where);
+	return (f->f_ops->seek)(f, offset, where);
 }

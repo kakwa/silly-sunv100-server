@@ -1,4 +1,5 @@
-/*	$NetBSD: skpc.c,v 1.7 2009/03/14 15:36:22 dsl Exp $	*/
+/*	$OpenBSD: skpc.c,v 1.4 2004/08/07 00:38:33 deraadt Exp $	*/
+/*	$NetBSD: skpc.c,v 1.3 1996/03/14 18:52:18 christos Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1989 Regents of the University of California.

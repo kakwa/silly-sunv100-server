@@ -1,4 +1,4 @@
-/*	$NetBSD: eventvar.h,v 1.10 2021/10/10 18:07:51 thorpej Exp $	*/
+/*	$OpenBSD: eventvar.h,v 1.17 2022/07/09 12:48:21 visa Exp $	*/
 
 /*-
  * Copyright (c) 1999,2000 Jonathan Lemon <jlemon@FreeBSD.org>
@@ -25,47 +25,50 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * FreeBSD: src/sys/sys/eventvar.h,v 1.4 2000/07/18 19:31:48 jlemon Exp
- */
-
-/*
- * This header is provided for the kqueue implementation and kmem
- * grovellers, and is not expected to be used elsewhere.
+ *	$FreeBSD: src/sys/sys/eventvar.h,v 1.3 2000/05/26 02:06:54 jake Exp $
  */
 
 #ifndef _SYS_EVENTVAR_H_
-#define	_SYS_EVENTVAR_H_
+#define _SYS_EVENTVAR_H_
 
 #include <sys/mutex.h>
-#include <sys/selinfo.h>
-#include <sys/filedesc.h>
+#include <sys/refcnt.h>
+#include <sys/task.h>
 
-#define	KQ_NEVENTS	8		/* minimize copy{in,out} calls */
-#define	KQ_EXTENT	256		/* linear growth by this amount */
-#define	KFILTER_MAXNAME	256		/* maximum size of a filter name */
-#define	KFILTER_EXTENT	8		/* grow user_kfilters by this amt */
+#define KQ_NEVENTS	8		/* minimize copy{in,out} calls */
+#define KQEXTENT	256		/* linear growth by this amount */
 
+/*
+ * Locking:
+ *	I	immutable after creation
+ *	L	kqueue_klist_lock
+ *	a	atomic operations
+ *	q	kq_lock
+ */
 struct kqueue {
-	TAILQ_HEAD(kqlist, knote) kq_head;	/* list of pending event */
-	kmutex_t	kq_lock;		/* mutex for queue access */
-	filedesc_t	*kq_fdp;
-	struct selinfo	kq_sel;
-	kcondvar_t	kq_cv;
-	uint32_t	kq_count;		/* number of pending events */
+	struct		mutex kq_lock;		/* lock for queue access */
+	TAILQ_HEAD(, knote) kq_head;		/* [q] list of pending event */
+	int		kq_count;		/* [q] # of pending events */
+	struct		refcnt kq_refcnt;	/* [a] # of references */
+	struct		klist kq_klist;		/* [L] knotes of other kqs */
+	struct		filedesc *kq_fdp;	/* [I] fd table of this kq */
+
+	LIST_ENTRY(kqueue) kq_next;
+
+	u_int		kq_nknotes;		/* [q] # of registered knotes */
+
+	int		kq_knlistsize;		/* [q] size of kq_knlist */
+	struct		knlist *kq_knlist;	/* [q] list of
+						 *     attached knotes */
+	u_long		kq_knhashmask;		/* [q] size of kq_knhash */
+	struct		knlist *kq_knhash;	/* [q] hash table for
+						 *     attached knotes */
+	struct		task kq_task;		/* deferring of activation */
+
+	int		kq_state;		/* [q] */
+#define KQ_SLEEP	0x02
+#define KQ_DYING	0x04
+#define KQ_TASK		0x08
 };
-
-#define	KQ_RESTART	__BIT(31)		/* force ERESTART */
-#define	KQ_CLOSING	__BIT(30)		/* kqueue is closing for good */
-#define	KQ_MAXCOUNT	__BITS(0,29)
-#define	KQ_COUNT(kq)	((unsigned int)((kq)->kq_count & KQ_MAXCOUNT))
-
-#ifdef _KERNEL
-
-#if defined(DDB)
-void	kqueue_printit(struct kqueue *, bool,
-	    void (*)(const char *, ...));
-#endif /* DDB */
-
-#endif /* _KERNEL */
 
 #endif /* !_SYS_EVENTVAR_H_ */

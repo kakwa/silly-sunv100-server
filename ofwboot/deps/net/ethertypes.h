@@ -1,4 +1,5 @@
-/*	$NetBSD: ethertypes.h,v 1.22 2021/11/22 05:57:25 msaitoh Exp $	*/
+/*	$OpenBSD: ethertypes.h,v 1.20 2025/05/18 04:10:49 dlg Exp $	*/
+/*	$NetBSD: ethertypes.h,v 1.13 2002/02/10 01:28:32 thorpej Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1993
@@ -41,8 +42,8 @@
  * into the hardware independent ARP code. -is
  *
  * Additional sources of information:
+ *	http://standards.ieee.org/regauth/ethertype/eth.txt
  *	http://www.mit.edu/~map/Ethernet/Ethernet.txt
- *	ftp://venera.isi.edu/in-notes/iana/assignments/ethernet-numbers
  *
  */
 
@@ -62,23 +63,23 @@
 			     /* 0x0400	   Nixdorf */
 #define	ETHERTYPE_NS		0x0600	/* XNS */
 #define	ETHERTYPE_NSAT		0x0601	/* XNS Address Translation (3Mb only) */
-#define	ETHERTYPE_DLOG1 	0x0660	/* DLOG (?) */
-#define	ETHERTYPE_DLOG2 	0x0661	/* DLOG (?) */
+#define	ETHERTYPE_DLOG1		0x0660	/* DLOG (?) */
+#define	ETHERTYPE_DLOG2		0x0661	/* DLOG (?) */
 #define	ETHERTYPE_IP		0x0800	/* IP protocol */
 #define	ETHERTYPE_X75		0x0801	/* X.75 Internet */
 #define	ETHERTYPE_NBS		0x0802	/* NBS Internet */
 #define	ETHERTYPE_ECMA		0x0803	/* ECMA Internet */
-#define	ETHERTYPE_CHAOS 	0x0804	/* CHAOSnet */
+#define	ETHERTYPE_CHAOS		0x0804	/* CHAOSnet */
 #define	ETHERTYPE_X25		0x0805	/* X.25 Level 3 */
 #define	ETHERTYPE_ARP		0x0806	/* Address resolution protocol */
 #define	ETHERTYPE_NSCOMPAT	0x0807	/* XNS Compatibility */
-#define	ETHERTYPE_FRARP 	0x0808	/* Frame Relay ARP (RFC1701) */
+#define	ETHERTYPE_FRARP		0x0808	/* Frame Relay ARP (RFC1701) */
 			     /* 0x081C	   Symbolics Private */
 		    /* 0x0888 - 0x088A	   Xyplex */
 #define	ETHERTYPE_UBDEBUG	0x0900	/* Ungermann-Bass network debugger */
 #define	ETHERTYPE_IEEEPUP	0x0A00	/* Xerox IEEE802.3 PUP */
 #define	ETHERTYPE_IEEEPUPAT	0x0A01	/* Xerox IEEE802.3 PUP Address Translation */
-#define	ETHERTYPE_VINES 	0x0BAD	/* Banyan VINES */
+#define	ETHERTYPE_VINES		0x0BAD	/* Banyan VINES */
 #define	ETHERTYPE_VINESLOOP	0x0BAE	/* Banyan VINES Loopback */
 #define	ETHERTYPE_VINESECHO	0x0BAF	/* Banyan VINES Echo */
 
@@ -92,9 +93,10 @@
 #define	ETHERTYPE_NTRAILER	16
 
 #define	ETHERTYPE_DCA		0x1234	/* DCA - Multicast */
-#define	ETHERTYPE_VALID 	0x1600	/* VALID system protocol */
+#define	ETHERTYPE_VALID		0x1600	/* VALID system protocol */
 #define	ETHERTYPE_DOGFIGHT	0x1989	/* Artificial Horizons ("Aviator" dogfight simulator [on Sun]) */
 #define	ETHERTYPE_RCL		0x1995	/* Datapoint Corporation (RCL lan protocol) */
+#define	ETHERTYPE_NHRP		0x2001	/* NBMA Next Hop Resolution Protocol (RFC2332) */
 
 					/* The following 3C0x types
 					   are unregistered: */
@@ -108,7 +110,7 @@
 #define	ETHERTYPE_NBPDG		0x3C07	/* 3Com NBP Datagram (like XNS IDP) not registered */
 #define	ETHERTYPE_NBPDGB	0x3C08	/* 3Com NBP Datagram broadcast not registered */
 #define	ETHERTYPE_NBPCLAIM	0x3C09	/* 3Com NBP Claim NetBIOS name not registered */
-#define	ETHERTYPE_NBPDLTE	0x3C0A	/* 3Com NBP Delete NetBIOS name not registered */
+#define	ETHERTYPE_NBPDLTE	0x3C0A	/* 3Com NBP Delete Netbios name not registered */
 #define	ETHERTYPE_NBPRAS	0x3C0B	/* 3Com NBP Remote adaptor status request not registered */
 #define	ETHERTYPE_NBPRAR	0x3C0C	/* 3Com NBP Remote adaptor response not registered */
 #define	ETHERTYPE_NBPRST	0x3C0D	/* 3Com NBP Reset not registered */
@@ -288,8 +290,8 @@
 #define	ETHERTYPE_IPAS		0x876C	/* IP Autonomous Systems (RFC1701) */
 #define	ETHERTYPE_SECUREDATA	0x876D	/* Secure Data (RFC1701) */
 #define	ETHERTYPE_FLOWCONTROL	0x8808	/* 802.3x flow control packet */
-#define	ETHERTYPE_SLOWPROTOCOLS	0x8809	/* Slow protocols */
-#define	ETHERTYPE_PPP		0x880B	/* PPP (obsolete by PPPoE) */
+#define ETHERTYPE_SLOW		0x8809	/* 803.3ad slow protocols (LACP/Marker) */
+#define	ETHERTYPE_PPP		0x880B	/* PPP (obsolete by PPPOE) */
 #define	ETHERTYPE_HITACHI	0x8820	/* Hitachi Cable (Optoelectronic Systems Laboratory) */
 #define	ETHERTYPE_MPLS		0x8847	/* MPLS Unicast */
 #define	ETHERTYPE_MPLS_MCAST	0x8848	/* MPLS Multicast */
@@ -297,12 +299,17 @@
 #define	ETHERTYPE_PPPOEDISC	0x8863	/* PPP Over Ethernet Discovery Stage */
 #define	ETHERTYPE_PPPOE		0x8864	/* PPP Over Ethernet Session Stage */
 #define	ETHERTYPE_LANPROBE	0x8888	/* HP LanProbe test? */
-#define	ETHERTYPE_PAE		0x888e	/* EAPOL PAE/802.1x */
-#define	ETHERTYPE_AOE		0x88a2	/* ATA over Ethernet */
-#define	ETHERTYPE_QINQ		0x88a8	/* 802.1ad VLAN stacking */
+#define	ETHERTYPE_EAPOL		0x888E	/* 802.1X EAP over LAN */
+#define	ETHERTYPE_AOE		0x88A2	/* ATA over Ethernet */
+#define	ETHERTYPE_QINQ		0x88A8	/* 802.1ad VLAN stacking */
 #define	ETHERTYPE_LLDP		0x88CC	/* Link Layer Discovery Protocol */
-#define	ETHERTYPE_MACSEC	0x88E5	/* 802.1AE MAC Security */
-#define	ETHERTYPE_FCOE		0x8906	/* Fibre Channel over Ethernet */
+#define	ETHERTYPE_802_EX1	0x88B5	/* IEEE Std 802 - Local Experimental */
+#define	ETHERTYPE_802_EX2	0x88B6	/* IEEE Std 802 - Local Experimental */
+#define	ETHERTYPE_MACSEC	0x88e5	/* 802.1AE MACsec */
+#define	ETHERTYPE_PBB		0x88e7	/* 802.1Q Provider Backbone Bridging */
+#define	ETHERTYPE_PTP		0x88F7	/* IEEE 1588 Precision Time Protocol */
+#define	ETHERTYPE_CFM		0x8902	/* 802.1ag Connectivity Fault Management */
+#define	ETHERTYPE_NSH		0x894F	/* Network Service Header (RFC8300) */
 #define	ETHERTYPE_LOOPBACK	0x9000	/* Loopback */
 #define	ETHERTYPE_LBACK		ETHERTYPE_LOOPBACK	/* DEC MOP loopback */
 #define	ETHERTYPE_XNSSM		0x9001	/* 3Com (Formerly Bridge Communications), XNS Systems Management */
@@ -315,4 +322,4 @@
 
 #define	ETHERTYPE_MAX		0xFFFF	/* Maximum valid ethernet type, reserved */
 
-#endif /* !_NET_ETHERTYPES_H_ */
+#endif /* _NET_ETHERTYPES_H_ */

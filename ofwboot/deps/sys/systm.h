@@ -1,4 +1,5 @@
-/*	$NetBSD: systm.h,v 1.306 2024/05/12 10:34:56 rillig Exp $	*/
+/*	$OpenBSD: systm.h,v 1.177 2025/07/28 05:08:35 dlg Exp $	*/
+/*	$NetBSD: systm.h,v 1.50 1996/06/09 04:55:09 briggs Exp $	*/
 
 /*-
  * Copyright (c) 1982, 1988, 1991, 1993
@@ -33,739 +34,416 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)systm.h	8.7 (Berkeley) 3/29/95
+ *	@(#)systm.h	8.4 (Berkeley) 2/23/94
  */
 
-#ifndef _SYS_SYSTM_H_
-#define _SYS_SYSTM_H_
+#ifndef __SYSTM_H__
+#define __SYSTM_H__
 
-#if defined(_KERNEL_OPT)
-#include "opt_ddb.h"
-#include "opt_multiprocessor.h"
-#include "opt_gprof.h"
-#include "opt_kasan.h"
-#include "opt_kcsan.h"
-#include "opt_kmsan.h"
-#include "opt_modular.h"
-#include "opt_wsdisplay_compat.h"
-#endif
-#if !defined(_KERNEL) && !defined(_STANDALONE)
-#include <stdbool.h>
-#endif
-
-#include <machine/endian.h>
-
-#include <sys/types.h>
+#include <sys/queue.h>
 #include <sys/stdarg.h>
 
-#include <sys/device_if.h>
-
-struct clockframe;
-struct lwp;
-struct proc;
-struct sysent;
-struct timeval;
-struct tty;
-struct uio;
-struct vnode;
-struct vmspace;
-
+/*
+ * The `securelevel' variable controls the security level of the system.
+ * It can only be decreased by process 1 (/sbin/init).
+ *
+ * Security levels are as follows:
+ *   -1	permanently insecure mode - always run system in level 0 mode.
+ *    0	insecure mode - immutable and append-only flags may be turned off.
+ *	All devices may be read or written subject to permission modes.
+ *    1	secure mode - immutable and append-only flags may not be changed;
+ *	raw disks of mounted filesystems, /dev/mem, and /dev/kmem are
+ *	read-only.
+ *    2	highly secure mode - same as (1) plus raw disks are always
+ *	read-only whether mounted or not. This level precludes tampering
+ *	with filesystems by unmounting them, but also inhibits running
+ *	newfs while the system is secured.
+ *
+ * In normal operation, the system runs in level 0 mode while single user
+ * and in level 1 mode while multiuser. If level 2 mode is desired while
+ * running multiuser, it can be set in the multiuser startup script
+ * (/etc/rc.local) using sysctl(1). If it is desired to run the system
+ * in level 0 mode while multiuser, initialize the variable securelevel
+ * in /sys/kern/kern_sysctl.c to -1. Note that it is NOT initialized to
+ * zero as that would allow the vmunix binary to be patched to -1.
+ * Without initialization, securelevel loads in the BSS area which only
+ * comes into existence when the kernel is loaded and hence cannot be
+ * patched by a stalking hacker.
+ */
+extern int securelevel;		/* system security level */
 extern const char *panicstr;	/* panic message */
-extern int doing_shutdown;	/* shutting down */
-
+extern const char version[];		/* system version */
 extern const char copyright[];	/* system copyright */
-extern char machine[];		/* machine type */
-extern char machine_arch[];	/* machine architecture */
-extern const char osrelease[];	/* short system version */
-extern const char ostype[];	/* system type */
-extern const char kernel_ident[];/* kernel configuration ID */
-extern const char version[];	/* system version */
-extern const char buildinfo[];	/* information from build environment */
+extern const char ostype[];
+extern const char osversion[];
+extern const char osrelease[];
+extern int cold;		/* cold start flag initialized in locore */
+extern int db_active;		/* running currently inside ddb(4) */
 
-extern int autonicetime;        /* time (in seconds) before autoniceval */
-extern int autoniceval;         /* proc priority after autonicetime */
+extern char *hw_vendor;		/* sysctl hw.vendor */
+extern char *hw_prod;		/* sysctl hw.product */
+extern char *hw_uuid;		/* sysctl hw.uuid */
+extern char *hw_serial;		/* sysctl hw.serialno */
+extern char *hw_ver;		/* sysctl hw.version */
 
-extern int selwait;		/* select timeout address */
+extern int ncpus;		/* number of CPUs used */
+extern int ncpusfound;		/* number of CPUs found */
+extern int nblkdev;		/* number of entries in bdevsw */
+extern int nchrdev;		/* number of entries in cdevsw */
 
-extern int maxmem;		/* max memory per process */
-extern psize_t physmem;		/* physical memory */
+extern int physmem;		/* physical memory */
 
 extern dev_t dumpdev;		/* dump device */
-extern dev_t dumpcdev;		/* dump device (character equivalent) */
 extern long dumplo;		/* offset into dumpdev */
-extern int dumpsize;		/* size of dump in pages */
-extern const char *dumpspec;	/* how dump device was specified */
 
 extern dev_t rootdev;		/* root device */
+extern u_char bootduid[8];	/* boot device disklabel uid */
+extern u_char rootduid[8];	/* root device disklabel uid */
 extern struct vnode *rootvp;	/* vnode equivalent to above */
-extern device_t root_device; /* device equivalent to above */
-extern const char *rootspec;	/* how root device was specified */
+extern struct device *rootdv;	/* device equivalent to above */
 
-extern int ncpu;		/* number of CPUs configured */
-extern int ncpuonline;		/* number of CPUs online */
-#if defined(_KERNEL)
-extern bool mp_online;		/* secondary processors are started */
-#endif /* defined(_KERNEL) */
-
-extern const char hexdigits[];	/* "0123456789abcdef" in subr_prf.c */
-extern const char HEXDIGITS[];	/* "0123456789ABCDEF" in subr_prf.c */
-
-/*
- * These represent the swap pseudo-device (`sw').  This device
- * is used by the swap pager to indirect through the routines
- * in sys/vm/vm_swap.c.
- */
-extern const dev_t swapdev;	/* swapping device */
+extern dev_t swapdev;		/* swapping device */
 extern struct vnode *swapdev_vp;/* vnode equivalent to above */
 
-extern const dev_t zerodev;	/* /dev/zero */
+extern int nowake;		/* dead wakeup(9) channel */
 
-#if defined(_KERNEL)
-typedef int	sy_call_t(struct lwp *, const void *, register_t *);
-
-extern struct sysent {		/* system call table */
-	short	sy_narg;	/* number of args */
-	short	sy_argsize;	/* total size of arguments */
-	int	sy_flags;	/* flags. see below */
-	sy_call_t *sy_call;     /* implementing function */
-	uint32_t sy_entry;	/* DTrace entry ID for systrace. */
-	uint32_t sy_return;	/* DTrace return ID for systrace. */
-} sysent[];
-extern int nsysent;
-extern const uint32_t sysent_nomodbits[];
+#ifdef MP_LOCKDEBUG
+extern long __mp_lock_spinout;
 #endif
 
-#if	BYTE_ORDER == BIG_ENDIAN
-#define	SCARG(p,k)	((p)->k.be.datum)	/* get arg from args pointer */
-#elif	BYTE_ORDER == LITTLE_ENDIAN
-#define	SCARG(p,k)	((p)->k.le.datum)	/* get arg from args pointer */
+struct proc;
+struct process;
+#define curproc curcpu()->ci_curproc
+
+typedef int	sy_call_t(struct proc *, void *, register_t *);
+
+extern const struct sysent {	/* system call table */
+	short	sy_narg;	/* number of args */
+	short	sy_argsize;	/* total size of arguments */
+	int	sy_flags;
+	sy_call_t *sy_call;	/* implementing function */
+} sysent[];
+
+#define SY_NOLOCK		0x01
+
+#if	_BYTE_ORDER == _BIG_ENDIAN
+#define SCARG(p, k)	((p)->k.be.datum)	/* get arg from args pointer */
+#elif	_BYTE_ORDER == _LITTLE_ENDIAN
+#define SCARG(p, k)	((p)->k.le.datum)	/* get arg from args pointer */
 #else
 #error	"what byte order is this machine?"
 #endif
 
-#define	SYCALL_INDIRECT	0x0000002 /* indirect (ie syscall() or __syscall()) */
-#define	SYCALL_NARGS64_MASK	0x000f000 /* count of 64bit args */
-#define SYCALL_RET_64	0x0010000 /* retval is a 64bit integer value */
-#define SYCALL_ARG0_64  0x0020000
-#define SYCALL_ARG1_64  0x0040000
-#define SYCALL_ARG2_64  0x0080000
-#define SYCALL_ARG3_64  0x0100000
-#define SYCALL_ARG4_64  0x0200000
-#define SYCALL_ARG5_64  0x0400000
-#define SYCALL_ARG6_64  0x0800000
-#define SYCALL_ARG7_64  0x1000000
-#define SYCALL_NOSYS    0x2000000 /* permanent nosys in sysent[] */
-#define	SYCALL_ARG_PTR	0x4000000 /* at least one argument is a pointer */
-#define SYCALL_RET_64_P(sy)	((sy)->sy_flags & SYCALL_RET_64)
-#define SYCALL_ARG_64_P(sy, n)	((sy)->sy_flags & (SYCALL_ARG0_64 << (n)))
-#define	SYCALL_ARG_64_MASK(sy)	(((sy)->sy_flags >> 17) & 0xff)
-#define	SYCALL_ARG_PTR_P(sy)	((sy)->sy_flags & SYCALL_ARG_PTR)
-#define	SYCALL_NARGS64(sy)	(((sy)->sy_flags >> 12) & 0x0f)
-#define	SYCALL_NARGS64_VAL(n)	((n) << 12)
+#if defined(_KERNEL) && defined(SYSCALL_DEBUG)
+void scdebug_call(struct proc *p, register_t code, const register_t retval[]);
+void scdebug_ret(struct proc *p, register_t code, int error,
+    const register_t retval[]);
+#endif /* _KERNEL && SYSCALL_DEBUG */
 
 extern int boothowto;		/* reboot flags, from console subsystem */
-#define	bootverbose	(boothowto & AB_VERBOSE)
-#define	bootquiet	(boothowto & AB_QUIET)
-
-extern const char *get_booted_kernel(void);
 
 extern void (*v_putc)(int); /* Virtual console putc routine */
 
 /*
  * General function declarations.
  */
-void	voidop(void);
 int	nullop(void *);
-void*	nullret(void);
 int	enodev(void);
 int	enosys(void);
 int	enoioctl(void);
 int	enxio(void);
-int	eopnotsupp(void);
+int	eopnotsupp(void *);
 
-enum hashtype {
-	HASH_LIST,
-	HASH_SLIST,
-	HASH_TAILQ,
-	HASH_PSLIST
-};
+void	*hashinit(int, int, int, u_long *);
+void	 hashfree(void *, int, int);
+int	sys_nosys(struct proc *, void *, register_t *);
 
-#ifdef _KERNEL
-#define COND_SET_STRUCT(dst, src, allow) \
-	do { \
-		/* \
-		 * Make sure we don't end up hashing/assigning large \
-		 * structure for performance. Upper-bound is arbitrary, \
-		 * but consider before bumping. \
-		 */ \
-		CTASSERT(sizeof(src) < 32); \
-		if (allow) \
-			dst = src; \
-		else \
-			hash_value(&dst, sizeof(dst), &src, sizeof(src)); \
-	} while (0)
+void	panic(const char *, ...)
+    __attribute__((__noreturn__,__format__(__kprintf__,1,2)));
+void	__assert(const char *, const char *, int, const char *)
+    __attribute__((__noreturn__));
+int	printf(const char *, ...)
+    __attribute__((__format__(__kprintf__,1,2)));
+void	uprintf(const char *, ...)
+    __attribute__((__format__(__kprintf__,1,2)));
+int	vprintf(const char *, va_list)
+    __attribute__((__format__(__kprintf__,1,0)));
+int	vsnprintf(char *, size_t, const char *, va_list)
+    __attribute__((__format__(__kprintf__,3,0)));
+int	snprintf(char *buf, size_t, const char *, ...)
+    __attribute__((__format__(__kprintf__,3,4)));
+struct tty;
+void	ttyprintf(struct tty *, const char *, ...)
+    __attribute__((__format__(__kprintf__,2,3)));
 
-#define COND_SET_CPTR(dst, src, allow) \
-	do { \
-		if (allow) \
-			dst = src; \
-		else { \
-			void *__v; \
-			hash_value(&__v, sizeof(__v), &src, sizeof(src)); \
-			dst = __v; \
-		} \
-	} while (0)
+void	splassert_fail(int, int, const char *);
+extern	int splassert_ctl;
 
-#define COND_SET_PTR(dst, src, allow) \
-	do { \
-		if (allow) \
-			dst = src; \
-		else \
-			hash_value(&dst, sizeof(dst), &src, sizeof(src)); \
-	} while (0)
+void	assertwaitok(void);
 
-#define COND_SET_VALUE(dst, src, allow)	\
-	do { \
-		if (allow) \
-			dst = src; \
-		else { \
-			uint64_t __v = src; \
-			hash_value(&dst, sizeof(dst), &__v, sizeof(__v)); \
-		} \
-	} while (0)
+void	tablefull(const char *);
 
-void	hash_value(void *, size_t, const void *, size_t);
-void	hash_value_ensure_initialized(void);
+int	kcopy(const void *, void *, size_t)
+		__attribute__ ((__bounded__(__buffer__,1,3)))
+		__attribute__ ((__bounded__(__buffer__,2,3)));
 
-bool	get_expose_address(struct proc *);
-void	*hashinit(u_int, enum hashtype, bool, u_long *);
-void	hashdone(void *, enum hashtype, u_long);
-int	seltrue(dev_t, int, struct lwp *);
-int	sys_nosys(struct lwp *, const void *, register_t *);
-int	sys_nomodule(struct lwp *, const void *, register_t *);
+void	bcopy(const void *, void *, size_t)
+		__attribute__ ((__bounded__(__buffer__,1,3)))
+		__attribute__ ((__bounded__(__buffer__,2,3)));
+void	bzero(void *, size_t)
+		__attribute__ ((__bounded__(__buffer__,1,2)));
+void	explicit_bzero(void *, size_t)
+		__attribute__ ((__bounded__(__buffer__,1,2)));
+int	bcmp(const void *, const void *, size_t);
+void	*memcpy(void *, const void *, size_t)
+		__attribute__ ((__bounded__(__buffer__,1,3)))
+		__attribute__ ((__bounded__(__buffer__,2,3)));
+void	*memmove(void *, const void *, size_t)
+		__attribute__ ((__bounded__(__buffer__,1,3)))
+		__attribute__ ((__bounded__(__buffer__,2,3)));
+void	*memset(void *, int, size_t)
+		__attribute__ ((__bounded__(__buffer__,1,3)));
 
-void	aprint_normal(const char *, ...) __printflike(1, 2);
-void	aprint_error(const char *, ...) __printflike(1, 2);
-void	aprint_naive(const char *, ...) __printflike(1, 2);
-void	aprint_verbose(const char *, ...) __printflike(1, 2);
-void	aprint_debug(const char *, ...) __printflike(1, 2);
-
-void	aprint_normal_dev(device_t, const char *, ...) __printflike(2, 3);
-void	aprint_error_dev(device_t, const char *, ...) __printflike(2, 3);
-void	aprint_naive_dev(device_t, const char *, ...) __printflike(2, 3);
-void	aprint_verbose_dev(device_t, const char *, ...) __printflike(2, 3);
-void	aprint_debug_dev(device_t, const char *, ...) __printflike(2, 3);
-
-void	device_printf(device_t, const char *fmt, ...) __printflike(2, 3);
-
-struct ifnet;
-
-void	aprint_normal_ifnet(struct ifnet *, const char *, ...)
-    __printflike(2, 3);
-void	aprint_error_ifnet(struct ifnet *, const char *, ...)
-    __printflike(2, 3);
-void	aprint_naive_ifnet(struct ifnet *, const char *, ...)
-    __printflike(2, 3);
-void	aprint_verbose_ifnet(struct ifnet *, const char *, ...)
-    __printflike(2, 3);
-void	aprint_debug_ifnet(struct ifnet *, const char *, ...)
-    __printflike(2, 3);
-
-int	aprint_get_error_count(void);
-
-void	printf_tolog(const char *, ...) __printflike(1, 2);
-
-void	printf_nolog(const char *, ...) __printflike(1, 2);
-
-void	printf_nostamp(const char *, ...) __printflike(1, 2);
-
-void	printf(const char *, ...) __printflike(1, 2);
-
-int	snprintf(char *, size_t, const char *, ...) __printflike(3, 4);
-
-int	vasprintf(char **, const char *, va_list) __printflike(2, 0);
-
-void	vprintf(const char *, va_list) __printflike(1, 0);
-
-int	vsnprintf(char *, size_t, const char *, va_list) __printflike(3, 0);
-
-void	vprintf_flags(int, const char *, va_list) __printflike(2, 0);
-
-void	printf_flags(int, const char *, ...) __printflike(2, 3);
-
-int	humanize_number(char *, size_t, uint64_t, const char *, int);
-
-void	twiddle(void);
-void	banner(void);
-#endif /* _KERNEL */
-
-void	panic(const char *, ...) __dead __printflike(1, 2);
-void	vpanic(const char *, va_list) __dead __printflike(1, 0);
-void	uprintf(const char *, ...) __printflike(1, 2);
-void	uprintf_locked(const char *, ...) __printflike(1, 2);
-void	ttyprintf(struct tty *, const char *, ...) __printflike(2, 3);
-
-int	format_bytes(char *, size_t, uint64_t);
-
-void	tablefull(const char *, const char *);
-
-#if defined(_KERNEL) && defined(KASAN)
-int	kasan_kcopy(const void *, void *, size_t);
-#define kcopy		kasan_kcopy
-#elif defined(_KERNEL) && defined(KCSAN)
-int	kcsan_kcopy(const void *, void *, size_t);
-#define kcopy		kcsan_kcopy
-#elif defined(_KERNEL) && defined(KMSAN)
-int	kmsan_kcopy(const void *, void *, size_t);
-#define kcopy		kmsan_kcopy
-#else
-int	kcopy(const void *, void *, size_t);
-#endif
-
-#ifdef _KERNEL
-#define bcopy(src, dst, len)	memcpy((dst), (src), (len))
-#define bzero(src, len)		memset((src), 0, (len))
-#define bcmp(a, b, len)		memcmp((a), (b), (len))
-#endif /* KERNEL */
-
-int	copystr(const void *, void *, size_t, size_t *);
-#if defined(_KERNEL) && defined(KASAN)
-int	kasan_copyinstr(const void *, void *, size_t, size_t *);
-int	kasan_copyoutstr(const void *, void *, size_t, size_t *);
-int	kasan_copyin(const void *, void *, size_t);
-int	copyout(const void *, void *, size_t);
-#define copyinstr	kasan_copyinstr
-#define copyoutstr	kasan_copyoutstr
-#define copyin		kasan_copyin
-#elif defined(_KERNEL) && defined(KCSAN)
-int	kcsan_copyinstr(const void *, void *, size_t, size_t *);
-int	kcsan_copyoutstr(const void *, void *, size_t, size_t *);
-int	kcsan_copyin(const void *, void *, size_t);
-int	kcsan_copyout(const void *, void *, size_t);
-#define copyinstr	kcsan_copyinstr
-#define copyoutstr	kcsan_copyoutstr
-#define copyin		kcsan_copyin
-#define copyout		kcsan_copyout
-#elif defined(_KERNEL) && defined(KMSAN)
-int	kmsan_copyinstr(const void *, void *, size_t, size_t *);
-int	kmsan_copyoutstr(const void *, void *, size_t, size_t *);
-int	kmsan_copyin(const void *, void *, size_t);
-int	kmsan_copyout(const void *, void *, size_t);
-#define copyinstr	kmsan_copyinstr
-#define copyoutstr	kmsan_copyoutstr
-#define copyin		kmsan_copyin
-#define copyout		kmsan_copyout
-#else
-int	copyinstr(const void *, void *, size_t, size_t *);
+int	copyinstr(const void *, void *, size_t, size_t *)
+		__attribute__ ((__bounded__(__string__,2,3)));
+int	_copyinstr(const void *, void *, size_t, size_t *)
+		__attribute__ ((__bounded__(__string__,2,3)));
 int	copyoutstr(const void *, void *, size_t, size_t *);
-int	copyin(const void *, void *, size_t);
+int	copyin(const void *, void *, size_t)
+		__attribute__ ((__bounded__(__buffer__,2,3)));
+int	_copyin(const void *, void *, size_t)
+		__attribute__ ((__bounded__(__buffer__,2,3)));
 int	copyout(const void *, void *, size_t);
-#endif
+int	copyin32(const uint32_t *, uint32_t *);
 
-#ifdef _KERNEL
-typedef	int	(*copyin_t)(const void *, void *, size_t);
-typedef int	(*copyout_t)(const void *, void *, size_t);
-#endif
+void	random_start(int);
+void	enqueue_randomness(unsigned int);
+void	suspend_randomness(void);
+void	resume_randomness(char *, size_t);
 
-int	copyin_proc(struct proc *, const void *, void *, size_t);
-int	copyout_proc(struct proc *, const void *, void *, size_t);
-int	copyin_pid(pid_t, const void *, void *, size_t);
-int	copyin_vmspace(struct vmspace *, const void *, void *, size_t);
-int	copyout_vmspace(struct vmspace *, const void *, void *, size_t);
+struct arc4random_ctx;
+void	arc4random_buf(void *, size_t)
+		__attribute__ ((__bounded__(__buffer__,1,2)));
+struct arc4random_ctx	*arc4random_ctx_new(void);
+void	arc4random_ctx_free(struct arc4random_ctx *);
+void	arc4random_ctx_buf(struct arc4random_ctx *, void *, size_t);
+u_int32_t arc4random(void);
+u_int32_t arc4random_uniform(u_int32_t);
 
-int	ioctl_copyin(int ioctlflags, const void *src, void *dst, size_t len);
-int	ioctl_copyout(int ioctlflags, const void *src, void *dst, size_t len);
-
-int	ucas_32(volatile uint32_t *, uint32_t, uint32_t, uint32_t *);
-#ifdef _LP64
-int	ucas_64(volatile uint64_t *, uint64_t, uint64_t, uint64_t *);
-#endif
-int	ucas_ptr(volatile void *, void *, void *, void *);
-int	ucas_int(volatile unsigned int *, unsigned int, unsigned int,
-		 unsigned int *);
-int	ufetch_8(const uint8_t *, uint8_t *);
-int	ufetch_16(const uint16_t *, uint16_t *);
-int	ufetch_32(const uint32_t *, uint32_t *);
-#ifdef _LP64
-int	ufetch_64(const uint64_t *, uint64_t *);
-#endif
-int	ufetch_char(const unsigned char *, unsigned char *);
-int	ufetch_short(const unsigned short *, unsigned short *);
-int	ufetch_int(const unsigned int *, unsigned int *);
-int	ufetch_long(const unsigned long *, unsigned long *);
-int	ufetch_ptr(const void **, void **);
-int	ustore_8(uint8_t *, uint8_t);
-int	ustore_16(uint16_t *, uint16_t);
-int	ustore_32(uint32_t *, uint32_t);
-#ifdef _LP64
-int	ustore_64(uint64_t *, uint64_t);
-#endif
-int	ustore_char(unsigned char *, unsigned char);
-int	ustore_short(unsigned short *, unsigned short);
-int	ustore_int(unsigned int *, unsigned int);
-int	ustore_long(unsigned long *, unsigned long);
-int	ustore_ptr(void **, void *);
-
-#ifdef __UCAS_PRIVATE
-
-#if defined(__HAVE_UCAS_FULL) && defined(KASAN)
-int	kasan__ucas_32(volatile uint32_t *, uint32_t, uint32_t, uint32_t *);
-#ifdef __HAVE_UCAS_MP
-int	kasan__ucas_32_mp(volatile uint32_t *, uint32_t, uint32_t, uint32_t *);
-#endif /* __HAVE_UCAS_MP */
-#ifdef _LP64
-int	kasan__ucas_64(volatile uint64_t *, uint64_t, uint64_t, uint64_t *);
-#ifdef __HAVE_UCAS_MP
-int	kasan__ucas_64_mp(volatile uint64_t *, uint64_t, uint64_t, uint64_t *);
-#endif /* __HAVE_UCAS_MP */
-#endif /* _LP64 */
-#define _ucas_32	kasan__ucas_32
-#define _ucas_32_mp	kasan__ucas_32_mp
-#define _ucas_64	kasan__ucas_64
-#define _ucas_64_mp	kasan__ucas_64_mp
-#elif defined(__HAVE_UCAS_FULL) && defined(KMSAN)
-int	kmsan__ucas_32(volatile uint32_t *, uint32_t, uint32_t, uint32_t *);
-#ifdef __HAVE_UCAS_MP
-int	kmsan__ucas_32_mp(volatile uint32_t *, uint32_t, uint32_t, uint32_t *);
-#endif /* __HAVE_UCAS_MP */
-#ifdef _LP64
-int	kmsan__ucas_64(volatile uint64_t *, uint64_t, uint64_t, uint64_t *);
-#ifdef __HAVE_UCAS_MP
-int	kmsan__ucas_64_mp(volatile uint64_t *, uint64_t, uint64_t, uint64_t *);
-#endif /* __HAVE_UCAS_MP */
-#endif /* _LP64 */
-#define _ucas_32	kmsan__ucas_32
-#define _ucas_32_mp	kmsan__ucas_32_mp
-#define _ucas_64	kmsan__ucas_64
-#define _ucas_64_mp	kmsan__ucas_64_mp
-#else
-int	_ucas_32(volatile uint32_t *, uint32_t, uint32_t, uint32_t *);
-#ifdef __HAVE_UCAS_MP
-int	_ucas_32_mp(volatile uint32_t *, uint32_t, uint32_t, uint32_t *);
-#endif /* __HAVE_UCAS_MP */
-#ifdef _LP64
-int	_ucas_64(volatile uint64_t *, uint64_t, uint64_t, uint64_t *);
-#ifdef __HAVE_UCAS_MP
-int	_ucas_64_mp(volatile uint64_t *, uint64_t, uint64_t, uint64_t *);
-#endif /* __HAVE_UCAS_MP */
-#endif /* _LP64 */
-#endif
-
-#endif /* __UCAS_PRIVATE */
-
-#ifdef __UFETCHSTORE_PRIVATE
-
-#if defined(KASAN)
-int	kasan__ufetch_8(const uint8_t *, uint8_t *);
-int	kasan__ufetch_16(const uint16_t *, uint16_t *);
-int	kasan__ufetch_32(const uint32_t *, uint32_t *);
-#ifdef _LP64
-int	kasan__ufetch_64(const uint64_t *, uint64_t *);
-#endif
-int	_ustore_8(uint8_t *, uint8_t);
-int	_ustore_16(uint16_t *, uint16_t);
-int	_ustore_32(uint32_t *, uint32_t);
-#ifdef _LP64
-int	_ustore_64(uint64_t *, uint64_t);
-#endif
-#define _ufetch_8	kasan__ufetch_8
-#define _ufetch_16	kasan__ufetch_16
-#define _ufetch_32	kasan__ufetch_32
-#define _ufetch_64	kasan__ufetch_64
-#elif defined(KMSAN)
-int	kmsan__ufetch_8(const uint8_t *, uint8_t *);
-int	kmsan__ufetch_16(const uint16_t *, uint16_t *);
-int	kmsan__ufetch_32(const uint32_t *, uint32_t *);
-#ifdef _LP64
-int	kmsan__ufetch_64(const uint64_t *, uint64_t *);
-#endif
-int	kmsan__ustore_8(uint8_t *, uint8_t);
-int	kmsan__ustore_16(uint16_t *, uint16_t);
-int	kmsan__ustore_32(uint32_t *, uint32_t);
-#ifdef _LP64
-int	kmsan__ustore_64(uint64_t *, uint64_t);
-#endif
-#define _ufetch_8	kmsan__ufetch_8
-#define _ufetch_16	kmsan__ufetch_16
-#define _ufetch_32	kmsan__ufetch_32
-#define _ufetch_64	kmsan__ufetch_64
-#define _ustore_8	kmsan__ustore_8
-#define _ustore_16	kmsan__ustore_16
-#define _ustore_32	kmsan__ustore_32
-#define _ustore_64	kmsan__ustore_64
-#else
-int	_ufetch_8(const uint8_t *, uint8_t *);
-int	_ufetch_16(const uint16_t *, uint16_t *);
-int	_ufetch_32(const uint32_t *, uint32_t *);
-#ifdef _LP64
-int	_ufetch_64(const uint64_t *, uint64_t *);
-#endif
-int	_ustore_8(uint8_t *, uint8_t);
-int	_ustore_16(uint16_t *, uint16_t);
-int	_ustore_32(uint32_t *, uint32_t);
-#ifdef _LP64
-int	_ustore_64(uint64_t *, uint64_t);
-#endif
-#endif
-
-#endif /* __UFETCHSTORE_PRIVATE */
-
-void	hardclock(struct clockframe *);
-void	softclock(void *);
-void	statclock(struct clockframe *);
-
-#ifdef NTP
-void	ntp_init(void);
-#ifdef PPS_SYNC
+struct timeval;
 struct timespec;
-void	hardpps(struct timespec *, long);
-#endif /* PPS_SYNC */
-#else
-void	ntp_init(void);	/* also provides adjtime() functionality */
-#endif /* NTP */
+int	tvtohz(const struct timeval *);
+int	tstohz(const struct timespec *);
+void	realitexpire(void *);
 
-void	ssp_init(void);
+extern uint64_t hardclock_period;
+extern uint64_t statclock_avg;
+extern int statclock_is_randomized;
+
+struct clockframe;
+void	hardclock(struct clockframe *);
+
+struct clockrequest;
+void	statclock(struct clockrequest *, void *, void *);
 
 void	initclocks(void);
 void	inittodr(time_t);
 void	resettodr(void);
 void	cpu_initclocks(void);
-void	setrootfstime(time_t);
+void	cpu_startclock(void);
 
-void	startprofclock(struct proc *);
-void	stopprofclock(struct proc *);
-void	proftick(struct clockframe *);
+void	startprofclock(struct process *);
+void	stopprofclock(struct process *);
 void	setstatclockrate(int);
+void	prof_fork(struct process *);
+void	prof_exec(struct process *);
+void	prof_write(struct proc *);
+
+void	start_periodic_resettodr(void);
+void	stop_periodic_resettodr(void);
+
+void	sleep_setup(const volatile void *, int, const char *);
+int	sleep_finish(uint64_t, int);
+void	sleep_queue_init(void);
+
+struct cond;
+void	cond_init(struct cond *);
+void	cond_wait(struct cond *, const char *);
+void	cond_signal_handler(void *);
+
+static inline void
+cond_signal(struct cond *c)
+{
+	cond_signal_handler(c);
+}
+
+#define	INFSLP	UINT64_MAX
+#define	MAXTSLP	(UINT64_MAX - 1)
+
+struct mutex;
+struct rwlock;
+void    wakeup_n(const volatile void *, int);
+void    wakeup(const volatile void *);
+#define wakeup_one(c) wakeup_n((c), 1)
+int	tsleep(const volatile void *, int, const char *, int);
+int	tsleep_nsec(const volatile void *, int, const char *, uint64_t);
+int	msleep(const volatile void *, struct mutex *, int,  const char*, int);
+int	msleep_nsec(const volatile void *, struct mutex *, int,  const char*,
+	    uint64_t);
+int	rwsleep(const volatile void *, struct rwlock *, int, const char *, int);
+int	rwsleep_nsec(const volatile void *, struct rwlock *, int, const char *,
+	    uint64_t);
+void	yield(void);
+
+void	wdog_register(int (*)(void *, int), void *);
+void	wdog_shutdown(void *);
 
 /*
- * Critical polling hooks.  Functions to be run while the kernel stays
- * elevated IPL for a "long" time.  (watchdogs).
- */
-void	*critpollhook_establish(void (*)(void *), void *);
-void	critpollhook_disestablish(void *);
-void	docritpollhooks(void);
-
-/*
- * Shutdown hooks.  Functions to be run with all interrupts disabled
- * immediately before the system is halted or rebooted.
- */
-void	*shutdownhook_establish(void (*)(void *), void *);
-void	shutdownhook_disestablish(void *);
-void	doshutdownhooks(void);
-
-/*
- * Power management hooks.
- */
-void	*powerhook_establish(const char *, void (*)(int, void *), void *);
-void	powerhook_disestablish(void *);
-void	dopowerhooks(int);
-#define PWR_RESUME	0
-#define PWR_SUSPEND	1
-#define PWR_STANDBY	2
-#define PWR_SOFTRESUME	3
-#define PWR_SOFTSUSPEND	4
-#define PWR_SOFTSTANDBY	5
-#define PWR_NAMES \
-	"resume",	/* 0 */ \
-	"suspend",	/* 1 */ \
-	"standby",	/* 2 */ \
-	"softresume",	/* 3 */ \
-	"softsuspend",	/* 4 */ \
-	"softstandby"	/* 5 */
-
-/*
- * Mountroot hooks (and mountroot declaration).  Device drivers establish
- * these to be executed just before (*mountroot)() if the passed device is
- * selected as the root device.
+ * Startup hooks are functions running after the scheduler has started
+ * but before any threads have been created or root has been mounted.
  */
 
-#define	ROOT_FSTYPE_ANY	"?"
+struct hook_desc {
+	TAILQ_ENTRY(hook_desc) hd_list;
+	void	(*hd_fn)(void *);
+	void	*hd_arg;
+};
+TAILQ_HEAD(hook_desc_head, hook_desc);
 
-extern const char *rootfstype;
-void	*mountroothook_establish(void (*)(device_t), device_t);
-void	mountroothook_disestablish(void *);
-void	mountroothook_destroy(void);
-void	domountroothook(device_t);
+extern struct hook_desc_head startuphook_list;
 
-/*
- * Exec hooks. Subsystems may want to do cleanup when a process
- * execs.
- */
-void	*exechook_establish(void (*)(struct proc *, void *), void *);
-void	exechook_disestablish(void *);
-void	doexechooks(struct proc *);
+void	*hook_establish(struct hook_desc_head *, int, void (*)(void *), void *);
+void	hook_disestablish(struct hook_desc_head *, void *);
+void	dohooks(struct hook_desc_head *, int);
 
-/*
- * Exit hooks. Subsystems may want to do cleanup when a process exits.
- */
-void	*exithook_establish(void (*)(struct proc *, void *), void *);
-void	exithook_disestablish(void *);
-void	doexithooks(struct proc *);
+#define HOOK_REMOVE	0x01
+#define HOOK_FREE	0x02
 
-/*
- * Fork hooks.  Subsystems may want to do special processing when a process
- * forks.
- */
-void	*forkhook_establish(void (*)(struct proc *, struct proc *));
-void	forkhook_disestablish(void *);
-void	doforkhooks(struct proc *, struct proc *);
+#define startuphook_establish(fn, arg) \
+	hook_establish(&startuphook_list, 1, (fn), (arg))
+#define startuphook_disestablish(vhook) \
+	hook_disestablish(&startuphook_list, (vhook))
+#define dostartuphooks() dohooks(&startuphook_list, HOOK_REMOVE|HOOK_FREE)
 
-/*
- * kernel syscall tracing/debugging hooks.
- */
-#ifdef _KERNEL
-bool	trace_is_enabled(struct proc *);
-int	trace_enter(register_t, const struct sysent *, const void *);
-void	trace_exit(register_t, const struct sysent *, const void *,
-    register_t [], int);
-#endif
-
+struct uio;
 int	uiomove(void *, size_t, struct uio *);
-int	uiomove_frombuf(void *, size_t, struct uio *);
-int	uiopeek(void *, size_t, struct uio *);
-void	uioskip(size_t, struct uio *);
 
-#ifdef _KERNEL
-int	setjmp(label_t *) __returns_twice;
-void	longjmp(label_t *) __dead;
+#if defined(_KERNEL)
+
+#include <sys/rwlock.h>
+
+extern struct rwlock netlock;
+
+/*
+ * Network stack data structures are, unless stated otherwise, protected
+ * by the NET_LOCK().  It's a single non-recursive lock for the whole
+ * subsystem.
+ */
+#define	NET_LOCK()	do { rw_enter_write(&netlock); } while (0)
+#define	NET_UNLOCK()	do { rw_exit_write(&netlock); } while (0)
+
+/*
+ * Reader version of NET_LOCK().
+ * The "softnet" thread should be the only thread processing packets
+ * without holding an exclusive lock.  This is done to allow read-only
+ * ioctl(2) to not block.
+ * Shared lock can be grabbed instead of the exclusive version if no field
+ * protected by the NET_LOCK() is modified by the ioctl/sysctl.
+ * Socket system call can use shared netlock if it has additional locks
+ * to protect socket and pcb data structures.
+ */
+#define	NET_LOCK_SHARED()	do { rw_enter_read(&netlock); } while (0)
+#define	NET_UNLOCK_SHARED()	do { rw_exit_read(&netlock); } while (0)
+
+#ifdef DIAGNOSTIC
+
+#define	NET_ASSERT_UNLOCKED()						\
+do {									\
+	int _s = rw_status(&netlock);					\
+	if ((splassert_ctl > 0) && (_s == RW_WRITE))			\
+		splassert_fail(0, RW_WRITE, __func__);			\
+} while (0)
+
+#define	NET_ASSERT_LOCKED()						\
+do {									\
+	int _s = rw_status(&netlock);					\
+	if ((splassert_ctl > 0) && (_s != RW_WRITE && _s != RW_READ))	\
+		splassert_fail(RW_READ, _s, __func__);			\
+} while (0)
+
+#define	NET_ASSERT_LOCKED_EXCLUSIVE()					\
+do {									\
+	int _s = rw_status(&netlock);					\
+	if ((splassert_ctl > 0) && (_s != RW_WRITE))			\
+		splassert_fail(RW_WRITE, _s, __func__);			\
+} while (0)
+
+#else /* DIAGNOSTIC */
+#define	NET_ASSERT_UNLOCKED()		do {} while (0)
+#define	NET_ASSERT_LOCKED()		do {} while (0)
+#define	NET_ASSERT_LOCKED_EXCLUSIVE()	do {} while (0)
+#endif /* !DIAGNOSTIC */
+
+__returns_twice int	setjmp(label_t *);
+__dead void	longjmp(label_t *);
 #endif
 
 void	consinit(void);
 
 void	cpu_startup(void);
 void	cpu_configure(void);
-void	cpu_bootconf(void);
-void	cpu_rootconf(void);
-void	cpu_dumpconf(void);
+void	diskconf(void);
 
-#ifdef GPROF
-void	kmstartup(void);
-#endif
+void	powerbutton_event(void);
 
-void	machdep_init(void);
+int nfs_mountroot(void);
+int dk_mountroot(void);
+extern int (*mountroot)(void);
 
-#ifdef _KERNEL
 #include <lib/libkern/libkern.h>
 
-/*
- * Stuff to handle debugger magic key sequences.
- */
-#define CNS_LEN			128
-#define CNS_MAGIC_VAL(x)	((x)&0x1ff)
-#define CNS_MAGIC_NEXT(x)	(((x)>>9)&0x7f)
-#define CNS_TERM		0x7f	/* End of sequence */
-
-typedef struct cnm_state {
-	int	cnm_state;
-	u_short	*cnm_magic;
-} cnm_state_t;
-
-/* Override db_console() in MD headers */
-#ifndef cn_trap
-#define cn_trap()	console_debugger()
+#define bzero(b, n)		__builtin_bzero((b), (n))
+#define memcmp(b1, b2, n)	__builtin_memcmp((b1), (b2), (n))
+#define memcpy(d, s, n)		__builtin_memcpy((d), (s), (n))
+#define memset(b, c, n)		__builtin_memset((b), (c), (n))
+#if (defined(__GNUC__) && __GNUC__ >= 4)
+#define memmove(d, s, n)	__builtin_memmove((d), (s), (n))
 #endif
-#ifndef cn_isconsole
-#ifndef WSDISPLAY_MULTICONS
-#define cn_isconsole(d)	(cn_tab != NULL && (d) == cn_tab->cn_dev)
-#else
-bool wsdisplay_cn_isconsole(dev_t);
-#define cn_isconsole(d)	wsdisplay_cn_isconsole(d)
-#endif
+#if !defined(__clang__) && (defined(__GNUC__) && __GNUC__ >= 4)
+#define bcmp(b1, b2, n)		__builtin_bcmp((b1), (b2), (n))
+#define bcopy(s, d, n)		__builtin_bcopy((s), (d), (n))
 #endif
 
-void cn_init_magic(cnm_state_t *);
-void cn_destroy_magic(cnm_state_t *);
-int cn_set_magic(const char *);
-int cn_get_magic(char *, size_t);
-/* This should be called for each byte read */
-#ifndef cn_check_magic
-#define cn_check_magic(d, k, s)						\
-	do {								\
-		if (cn_isconsole(d)) {					\
-			int _v = (s).cnm_magic[(s).cnm_state];		\
-			if ((k) == CNS_MAGIC_VAL(_v)) {			\
-				(s).cnm_state = CNS_MAGIC_NEXT(_v);	\
-				if ((s).cnm_state == CNS_TERM) {	\
-					cn_trap();			\
-					(s).cnm_state = 0;		\
-				}					\
-			} else {					\
-				(s).cnm_state = 0;			\
-			}						\
-		}							\
-	} while (0)
+#if defined(DDB)
+/* debugger entry points */
+void	db_enter(void);	/* in DDB only */
+int	db_rint(int);
 #endif
 
-/* Encode out-of-band events this way when passing to cn_check_magic() */
-#define	CNC_BREAK		0x100
-
-#if defined(DDB) || defined(sun3) || defined(sun2)
-/* note that cpu_Debugger() is always available on sun[23] */
-void	cpu_Debugger(void);
-#define Debugger	cpu_Debugger
+#ifdef BOOT_CONFIG
+void	user_config(void);
 #endif
 
-#ifdef DDB
-/*
- * Enter debugger(s) from console attention if enabled
- */
-extern int db_fromconsole; /* XXX ddb/ddbvar.h */
-#define console_debugger() if (db_fromconsole) Debugger()
-#elif defined(Debugger)
-#define console_debugger() Debugger()
-#else
-#define console_debugger() do {} while (0) /* NOP */
-#endif
+#if defined(MULTIPROCESSOR)
+void	_kernel_lock_init(void);
+void	_kernel_lock(void);
+void	_kernel_unlock(void);
+int	_kernel_lock_held(void);
 
-/* For SYSCALL_DEBUG */
-void scdebug_init(void);
-void scdebug_call(register_t, const register_t[]);
-void scdebug_ret(register_t, int, const register_t[]);
+#define	KERNEL_LOCK_INIT()		_kernel_lock_init()
+#define	KERNEL_LOCK()			_kernel_lock()
+#define	KERNEL_UNLOCK()			_kernel_unlock()
+#define	KERNEL_ASSERT_LOCKED()		KASSERT(_kernel_lock_held())
+#define	KERNEL_ASSERT_UNLOCKED()	KASSERT(panicstr || db_active || !_kernel_lock_held())
 
-void	kernel_lock_init(void);
-void	_kernel_lock(int);
-void	_kernel_unlock(int, int *);
-bool	_kernel_locked_p(void);
+#else /* ! MULTIPROCESSOR */
 
-void	kernconfig_lock_init(void);
-void	kernconfig_lock(void);
-void	kernconfig_unlock(void);
-bool	kernconfig_is_held(void);
-#endif
+#define	KERNEL_LOCK_INIT()		/* nothing */
+#define	KERNEL_LOCK()			/* nothing */
+#define	KERNEL_UNLOCK()			/* nothing */
+#define	KERNEL_ASSERT_LOCKED()		/* nothing */
+#define	KERNEL_ASSERT_UNLOCKED()	/* nothing */
 
-#if defined(MULTIPROCESSOR) || defined(MODULAR) || defined(_MODULE)
-#define	KERNEL_LOCK(count, lwp)			\
-do {						\
-	if ((count) != 0)			\
-		_kernel_lock((count));	\
-} while (0)
-#define	KERNEL_UNLOCK(all, lwp, p)	_kernel_unlock((all), (p))
-#define	KERNEL_LOCKED_P()		_kernel_locked_p()
-#else
-#define	KERNEL_LOCK(count, lwp)		do {(void)(count); (void)(lwp);} while (0) /*NOP*/
-#define	KERNEL_UNLOCK(all, lwp, ptr)	do {(void)(all); (void)(lwp); (void)(ptr);} while (0) /*NOP*/
-#define	KERNEL_LOCKED_P()		(true)
-#endif
+#endif /* MULTIPROCESSOR */
 
-#define	KERNEL_UNLOCK_LAST(l)		KERNEL_UNLOCK(-1, (l), NULL)
-#define	KERNEL_UNLOCK_ALL(l, p)		KERNEL_UNLOCK(0, (l), (p))
-#define	KERNEL_UNLOCK_ONE(l)		KERNEL_UNLOCK(1, (l), NULL)
-
-#ifdef _KERNEL
-/* Preemption control. */
-void	kpreempt_disable(void);
-void	kpreempt_enable(void);
-bool	kpreempt_disabled(void);
-
-vaddr_t calc_cache_size(vsize_t , int, int);
-#endif
-
-void assert_sleepable(void);
-#if defined(DEBUG)
-#define	ASSERT_SLEEPABLE()	assert_sleepable()
-#else /* defined(DEBUG) */
-#define	ASSERT_SLEEPABLE()	do {} while (0)
-#endif /* defined(DEBUG) */
-
-
-#endif	/* !_SYS_SYSTM_H_ */
+#endif /* __SYSTM_H__ */

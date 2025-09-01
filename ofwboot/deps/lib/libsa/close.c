@@ -1,4 +1,5 @@
-/*	$NetBSD: close.c,v 1.14 2007/12/02 04:59:25 tsutsui Exp $	*/
+/*	$OpenBSD: close.c,v 1.8 2003/08/11 06:23:09 deraadt Exp $	*/
+/*	$NetBSD: close.c,v 1.5 1995/09/06 19:53:29 pk Exp $	*/
 
 /*-
  * Copyright (c) 1993
@@ -61,6 +62,7 @@
  */
 
 #include "stand.h"
+#include "saerrno.h"
 
 int
 #ifndef __INTERNAL_LIBSA_CREAD
@@ -72,32 +74,22 @@ oclose(int fd)
 	struct open_file *f = &files[fd];
 	int err1 = 0, err2 = 0;
 
-#if !defined(LIBSA_NO_FD_CHECKING)
-	if ((unsigned int)fd >= SOPEN_MAX || f->f_flags == 0) {
+	if ((unsigned)fd >= SOPEN_MAX || f->f_flags == 0) {
 		errno = EBADF;
-		return -1;
+		return (-1);
 	}
-#endif
-#if !defined(LIBSA_NO_RAW_ACCESS)
-	if (!(f->f_flags & F_RAW))
-#endif
-#if !defined(LIBSA_SINGLE_FILESYSTEM)
-		if (f->f_ops != NULL)
-#endif
-			err1 = FS_CLOSE(f->f_ops)(f);
-	if (!(f->f_flags & F_NODEV))
-#if !defined(LIBSA_SINGLE_DEVICE)
-		if (f->f_dev != NULL)
-#endif
-			err2 = DEV_CLOSE(f->f_dev)(f);
+	if (!(f->f_flags & F_RAW) && f->f_ops)
+		err1 = (f->f_ops->close)(f);
+	if (!(f->f_flags & F_NODEV) && f->f_dev)
+		err2 = (f->f_dev->dv_close)(f);
 	f->f_flags = 0;
 	if (err1) {
 		errno = err1;
-		return -1;
+		return (-1);
 	}
 	if (err2) {
 		errno = err2;
-		return -1;
+		return (-1);
 	}
-	return 0;
+	return (0);
 }

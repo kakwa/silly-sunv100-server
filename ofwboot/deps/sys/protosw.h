@@ -1,4 +1,5 @@
-/*	$NetBSD: protosw.h,v 1.69 2018/09/14 05:09:51 maxv Exp $	*/
+/*	$OpenBSD: protosw.h,v 1.72 2025/03/02 21:28:32 bluhm Exp $	*/
+/*	$NetBSD: protosw.h,v 1.10 1996/04/09 20:55:32 cgd Exp $	*/
 
 /*-
  * Copyright (c) 1982, 1986, 1993
@@ -31,9 +32,6 @@
  *	@(#)protosw.h	8.1 (Berkeley) 6/2/93
  */
 
-#ifndef _SYS_PROTOSW_H_
-#define _SYS_PROTOSW_H_
-
 /*
  * Protocol switch table.
  *
@@ -43,12 +41,10 @@
  * A protocol is called through the pr_init entry before any other.
  * Thereafter it is called every 200ms through the pr_fasttimo entry and
  * every 500ms through the pr_slowtimo for timer based actions.
- * The system will call the pr_drain entry if it is low on space and
- * this should throw away any non-critical data.
  *
  * Protocols pass data between themselves as chains of mbufs using
- * the pr_input and pr_output hooks.  Pr_input passes data up (towards
- * UNIX) and pr_output passes it down (towards the imps); control
+ * the pr_input and pr_send hooks.  Pr_input passes data up (towards
+ * UNIX) and pr_send passes it down (towards the imps); control
  * information passes up and down on pr_ctlinput and pr_ctloutput.
  * The protocol is responsible for the space occupied by any the
  * arguments to these entries and must dispose it.
@@ -57,79 +53,95 @@
  * described below.
  */
 
+#ifndef _SYS_PROTOSW_H_
+#define _SYS_PROTOSW_H_
+
 struct mbuf;
-struct ifnet;
 struct sockaddr;
 struct socket;
-struct sockopt;
-struct stat;
 struct domain;
 struct proc;
-struct lwp;
-struct pr_usrreqs;
+struct stat;
+struct ifnet;
+struct netstack;
+
+struct pr_usrreqs {
+	int	(*pru_attach)(struct socket *, int, int);
+	int	(*pru_detach)(struct socket *);
+	int	(*pru_bind)(struct socket *, struct mbuf *, struct proc *);
+	int	(*pru_listen)(struct socket *);
+	int	(*pru_connect)(struct socket *, struct mbuf *);
+	int	(*pru_accept)(struct socket *, struct mbuf *);
+	int	(*pru_disconnect)(struct socket *);
+	int	(*pru_shutdown)(struct socket *);
+	void	(*pru_rcvd)(struct socket *);
+	int	(*pru_send)(struct socket *, struct mbuf *, struct mbuf *,
+		    struct mbuf *);
+	void	(*pru_abort)(struct socket *);
+	int	(*pru_control)(struct socket *, u_long, caddr_t,
+		    struct ifnet *);
+	int	(*pru_sense)(struct socket *, struct stat *);
+	int	(*pru_rcvoob)(struct socket *, struct mbuf *, int);
+	int	(*pru_sendoob)(struct socket *, struct mbuf *, struct mbuf *,
+		    struct mbuf *);
+	int	(*pru_sockaddr)(struct socket *, struct mbuf *);
+	int	(*pru_peeraddr)(struct socket *, struct mbuf *);
+	int	(*pru_connect2)(struct socket *, struct socket *);
+};
 
 struct protosw {
-	int 	pr_type;		/* socket type used for */
-	struct	domain *pr_domain;	/* domain protocol a member of */
+	short	pr_type;		/* socket type used for */
+	const	struct domain *pr_domain; /* domain protocol a member of */
 	short	pr_protocol;		/* protocol number */
 	short	pr_flags;		/* see below */
 
 /* protocol-protocol hooks */
-	void	(*pr_input)		/* input to protocol (from below) */
-			(struct mbuf *, int, int);
-	void	*(*pr_ctlinput)		/* control input (from below) */
-			(int, const struct sockaddr *, void *);
-	int	(*pr_ctloutput)		/* control output (from above) */
-			(int, struct socket *, struct sockopt *);
+					/* input to protocol (from below) */
+	int	(*pr_input)(struct mbuf **, int *, int, int, struct netstack *);
+					/* control input (from below) */
+	void	(*pr_ctlinput)(int, struct sockaddr *, u_int, void *);
+					/* control output (from above) */
+	int	(*pr_ctloutput)(int, struct socket *, int, int, struct mbuf *);
 
 /* user-protocol hooks */
-	const struct pr_usrreqs *pr_usrreqs;
-
+	const	struct pr_usrreqs *pr_usrreqs;
+	
 /* utility hooks */
-	void	(*pr_init)		/* initialization hook */
-			(void);
-
-	void	(*pr_fasttimo)		/* fast timeout (200ms) */
-			(void);
-	void	(*pr_slowtimo)		/* slow timeout (500ms) */
-			(void);
-	void	(*pr_drain)		/* flush any excess space possible */
-			(void);
+	void	(*pr_init)(void);	/* initialization hook */
+	void	(*pr_fasttimo)(void);	/* fast timeout (200ms) */
+	void	(*pr_slowtimo)(void);	/* slow timeout (500ms) */
+					/* sysctl for protocol */
+	int	(*pr_sysctl)(int *, u_int, void *, size_t *, void *, size_t);
 };
 
-#define	PR_SLOWHZ	2		/* 2 slow timeouts per second */
-#define	PR_FASTHZ	5		/* 5 fast timeouts per second */
+#define PR_SLOWHZ	2		/* 2 slow timeouts per second */
+#define PR_FASTHZ	5		/* 5 fast timeouts per second */
 
 /*
  * Values for pr_flags.
  * PR_ADDR requires PR_ATOMIC;
  * PR_ADDR and PR_CONNREQUIRED are mutually exclusive.
  */
-#define	PR_ATOMIC	0x01		/* exchange atomic messages only */
-#define	PR_ADDR		0x02		/* addresses given with messages */
-#define	PR_CONNREQUIRED	0x04		/* connection required by protocol */
-#define	PR_WANTRCVD	0x08		/* want pr_rcvd() calls */
-#define	PR_RIGHTS	0x10		/* passes capabilities */
-#define	PR_LISTEN	0x20		/* supports listen(2) and accept(2) */
-#define	PR_LASTHDR	0x40		/* enforce ipsec policy; last header */
-#define	PR_ABRTACPTDIS	0x80		/* abort on accept(2) to disconnected
+#define PR_ATOMIC	0x0001		/* exchange atomic messages only */
+#define PR_ADDR		0x0002		/* addresses given with messages */
+#define PR_CONNREQUIRED	0x0004		/* connection required by protocol */
+#define PR_WANTRCVD	0x0008		/* want PRU_RCVD calls */
+#define PR_RIGHTS	0x0010		/* passes capabilities */
+#define PR_ABRTACPTDIS	0x0020		/* abort on accept(2) to disconnected
 					   socket */
-#define PR_PURGEIF	0x100		/* might store struct ifnet pointer;
-					   pr_purgeif() must be called on ifnet
-					   deletion */
-#define	PR_ADDR_OPT	0x200		/* Allow address during delivery */
-
+#define PR_SPLICE	0x0040		/* socket splicing is possible */
+#define PR_MPINPUT	0x0080		/* input runs with shared netlock */
+#define PR_MPSYSCTL	0x0200		/* mp-safe sysctl(2) handler */
 
 /*
  * The arguments to usrreq are:
- *	(*protosw[].pr_usrreq)(up, req, m, nam, opt, p);
+ *	(*protosw[].pr_usrreq)(up, req, m, nam, opt);
  * where up is a (struct socket *), req is one of these requests,
  * m is a optional mbuf chain containing a message,
  * nam is an optional mbuf chain containing an address,
- * opt is an optional mbuf containing socket options,
- * and p is a pointer to the process requesting the action (if any).
- * The protocol is responsible for disposal of the mbuf chains m and opt,
- * the caller is responsible for any space held by nam.
+ * and opt is a pointer to a socketopt structure or nil.
+ * The protocol is responsible for disposal of the mbuf chain m,
+ * the caller is responsible for any space held by nam and opt.
  * A non-zero return from usrreq gives an
  * UNIX error number which should be passed to higher level software.
  */
@@ -156,18 +168,17 @@ struct protosw {
 #define	PRU_SLOWTIMO		19	/* 500ms timeout */
 #define	PRU_PROTORCV		20	/* receive from below */
 #define	PRU_PROTOSEND		21	/* send to below */
-#define	PRU_PURGEIF		22	/* purge specified if */
 
-#define	PRU_NREQ		23
+#define	PRU_NREQ		22
 
 #ifdef PRUREQUESTS
-static const char * const prurequests[] = {
+const char *prurequests[] = {
 	"ATTACH",	"DETACH",	"BIND",		"LISTEN",
 	"CONNECT",	"ACCEPT",	"DISCONNECT",	"SHUTDOWN",
 	"RCVD",		"SEND",		"ABORT",	"CONTROL",
 	"SENSE",	"RCVOOB",	"SENDOOB",	"SOCKADDR",
 	"PEERADDR",	"CONNECT2",	"FASTTIMO",	"SLOWTIMO",
-	"PROTORCV",	"PROTOSEND",	"PURGEIF",
+	"PROTORCV",	"PROTOSEND",
 };
 #endif
 
@@ -175,10 +186,11 @@ static const char * const prurequests[] = {
  * The arguments to the ctlinput routine are
  *	(*protosw[].pr_ctlinput)(cmd, sa, arg);
  * where cmd is one of the commands below, sa is a pointer to a sockaddr,
- * and arg is an optional void *argument used within a protocol family.
+ * and arg is an optional caddr_t argument used within a protocol family.
  */
 #define	PRC_IFDOWN		0	/* interface transition */
 #define	PRC_ROUTEDEAD		1	/* select new route if possible ??? */
+#define	PRC_MTUINC		2	/* increase in mtu to host */
 #define	PRC_QUENCH2		3	/* DEC congestion bit says slow down */
 #define	PRC_QUENCH		4	/* some one said to slow down */
 #define	PRC_MSGSIZE		5	/* message size forced drop */
@@ -204,8 +216,8 @@ static const char * const prurequests[] = {
 	((cmd) >= PRC_REDIRECT_NET && (cmd) <= PRC_REDIRECT_TOSHOST)
 
 #ifdef PRCREQUESTS
-static const char * const prcrequests[] = {
-	"IFDOWN", "ROUTEDEAD", "#2", "DEC-BIT-QUENCH2",
+char	*prcrequests[] = {
+	"IFDOWN", "ROUTEDEAD", "MTUINC", "DEC-BIT-QUENCH2",
 	"QUENCH", "MSGSIZE", "HOSTDEAD", "#7",
 	"NET-UNREACH", "HOST-UNREACH", "PROTO-UNREACH", "PORT-UNREACH",
 	"#12", "SRCFAIL-UNREACH", "NET-REDIRECT", "HOST-REDIRECT",
@@ -216,9 +228,14 @@ static const char * const prcrequests[] = {
 
 /*
  * The arguments to ctloutput are:
- *	(*protosw[].pr_ctloutput)(req, so, sopt);
+ *	(*protosw[].pr_ctloutput)(req, so, level, optname, optval);
  * req is one of the actions listed below, so is a (struct socket *),
- * sopt is a (struct sockopt *)
+ * level is an indication of which protocol layer the option is intended.
+ * optname is a protocol dependent socket option request,
+ * optval is a pointer to a mbuf-chain pointer, for value-return results.
+ * The protocol is responsible for disposal of the mbuf chain *optval
+ * if supplied,
+ * the caller is responsible for any space held by *optval, when returned.
  * A non-zero return from usrreq gives an
  * UNIX error number which should be passed to higher level software.
  */
@@ -228,283 +245,163 @@ static const char * const prcrequests[] = {
 #define	PRCO_NCMDS	2
 
 #ifdef PRCOREQUESTS
-static const char * const prcorequests[] = {
+char	*prcorequests[] = {
 	"GETOPT", "SETOPT",
 };
 #endif
 
 #ifdef _KERNEL
 
-struct pr_usrreqs {
-	int	(*pr_attach)(struct socket *, int);
-	void	(*pr_detach)(struct socket *);
-	int	(*pr_accept)(struct socket *, struct sockaddr *);
-	int	(*pr_connect)(struct socket *, struct sockaddr *, struct lwp *);
-	int	(*pr_connect2)(struct socket *, struct socket *);
-	int	(*pr_bind)(struct socket *, struct sockaddr *, struct lwp *);
-	int	(*pr_listen)(struct socket *, struct lwp *);
-	int	(*pr_disconnect)(struct socket *);
-	int	(*pr_shutdown)(struct socket *);
-	int	(*pr_abort)(struct socket *);
-	int	(*pr_ioctl)(struct socket *, u_long, void *, struct ifnet *);
-	int	(*pr_stat)(struct socket *, struct stat *);
-	int	(*pr_peeraddr)(struct socket *, struct sockaddr *);
-	int	(*pr_sockaddr)(struct socket *, struct sockaddr *);
-	int	(*pr_rcvd)(struct socket *, int, struct lwp *);
-	int	(*pr_recvoob)(struct socket *, struct mbuf *, int);
-	int	(*pr_send)(struct socket *, struct mbuf *, struct sockaddr *,
-	    struct mbuf *, struct lwp *);
-	int	(*pr_sendoob)(struct socket *, struct mbuf *, struct mbuf *);
-	int	(*pr_purgeif)(struct socket *, struct ifnet *);
-};
+#include <sys/mbuf.h>
+#include <sys/socketvar.h>
 
-/*
- * Monotonically increasing time values for slow and fast timers.
- */
-extern	u_int pfslowtimo_now;
-extern	u_int pffasttimo_now;
-
-#define	PRT_SLOW_ARM(t, nticks)	(t) = (pfslowtimo_now + (nticks))
-#define	PRT_FAST_ARM(t, nticks)	(t) = (pffasttimo_now + (nticks))
-
-#define	PRT_SLOW_DISARM(t)	(t) = 0
-#define	PRT_FAST_DISARM(t)	(t) = 0
-
-#define	PRT_SLOW_ISARMED(t)	((t) != 0)
-#define	PRT_FAST_ISARMED(t)	((t) != 0)
-
-#define	PRT_SLOW_ISEXPIRED(t)	(PRT_SLOW_ISARMED((t)) && (t) <= pfslowtimo_now)
-#define	PRT_FAST_ISEXPIRED(t)	(PRT_FAST_ISARMED((t)) && (t) <= pffasttimo_now)
-
-struct sockaddr;
 const struct protosw *pffindproto(int, int, int);
 const struct protosw *pffindtype(int, int);
-struct domain *pffinddomain(int);
-void pfctlinput(int, const struct sockaddr *);
-void pfctlinput2(int, const struct sockaddr *, void *);
+const struct domain *pffinddomain(int);
+void pfctlinput(int, struct sockaddr *);
 
-/*
- * Wrappers for non-MPSAFE protocols
- */
-#include <sys/systm.h>	/* kernel_lock */
+extern u_char ip_protox[];
+extern const struct protosw inetsw[];
 
-#define	PR_WRAP_USRREQS(name)				\
-static int						\
-name##_attach_wrapper(struct socket *a, int b)		\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_attach(a, b);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static void						\
-name##_detach_wrapper(struct socket *a)			\
-{							\
-	KERNEL_LOCK(1, NULL);				\
-	name##_detach(a);				\
-	KERNEL_UNLOCK_ONE(NULL);			\
-}							\
-static int						\
-name##_accept_wrapper(struct socket *a,			\
-    struct sockaddr *b)					\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_accept(a, b);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_bind_wrapper(struct socket *a,			\
-    struct sockaddr *b,	struct lwp *c)			\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_bind(a, b, c);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_connect_wrapper(struct socket *a,		\
-    struct sockaddr *b, struct lwp *c)			\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_connect(a, b, c);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_connect2_wrapper(struct socket *a,		\
-    struct socket *b)					\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_connect2(a, b);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_listen_wrapper(struct socket *a, struct lwp *b)	\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_listen(a, b);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_disconnect_wrapper(struct socket *a)		\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_disconnect(a);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_shutdown_wrapper(struct socket *a)		\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_shutdown(a);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_abort_wrapper(struct socket *a)			\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_abort(a);				\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_ioctl_wrapper(struct socket *a, u_long b,	\
-    void *c, struct ifnet *d)				\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_ioctl(a, b, c, d);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_stat_wrapper(struct socket *a, struct stat *b)	\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_stat(a, b);				\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_peeraddr_wrapper(struct socket *a,		\
-    struct sockaddr *b)					\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_peeraddr(a, b);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_sockaddr_wrapper(struct socket *a,		\
-    struct sockaddr *b)					\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_sockaddr(a, b);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_rcvd_wrapper(struct socket *a, int b,		\
-    struct lwp *c)					\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_rcvd(a, b, c);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_recvoob_wrapper(struct socket *a,		\
-    struct mbuf *b, int c)				\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_recvoob(a, b, c);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_send_wrapper(struct socket *a, struct mbuf *b,	\
-    struct sockaddr *c, struct mbuf *d, struct lwp *e)	\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_send(a, b, c, d, e);		\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_sendoob_wrapper(struct socket *a,		\
-    struct mbuf *b, struct mbuf *c)			\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_sendoob(a, b, c);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
-}							\
-static int						\
-name##_purgeif_wrapper(struct socket *a,		\
-    struct ifnet *b)					\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name##_purgeif(a, b);			\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
+#ifdef INET6
+extern u_char ip6_protox[];
+extern const struct protosw inet6sw[];
+#endif /* INET6 */
+
+static inline int
+pru_attach(struct socket *so, int proto, int wait)
+{
+	return (*so->so_proto->pr_usrreqs->pru_attach)(so, proto, wait);
 }
 
-#define	PR_WRAP_CTLOUTPUT(name)				\
-static int						\
-name##_wrapper(int a, struct socket *b,			\
-    struct sockopt *c)					\
-{							\
-	int rv;						\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name(a, b, c);				\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
+static inline int
+pru_detach(struct socket *so)
+{
+	return (*so->so_proto->pr_usrreqs->pru_detach)(so);
 }
 
-#define	PR_WRAP_CTLINPUT(name)				\
-static void *						\
-name##_wrapper(int a, const struct sockaddr *b, void *c)\
-{							\
-	void *rv;					\
-	KERNEL_LOCK(1, NULL);				\
-	rv = name(a, b, c);				\
-	KERNEL_UNLOCK_ONE(NULL);			\
-	return rv;					\
+static inline int
+pru_bind(struct socket *so, struct mbuf *nam, struct proc *p)
+{
+	if (so->so_proto->pr_usrreqs->pru_bind)
+		return (*so->so_proto->pr_usrreqs->pru_bind)(so, nam, p);
+	return (EOPNOTSUPP);
 }
 
-#include <sys/socketvar.h> /* for softnet_lock */
-
-#define	PR_WRAP_INPUT(name)				\
-static void						\
-name##_wrapper(struct mbuf *m, int off, int proto)	\
-{							\
-	mutex_enter(softnet_lock);			\
-	name(m, off, proto);				\
-	mutex_exit(softnet_lock);			\
+static inline int
+pru_listen(struct socket *so)
+{
+	if (so->so_proto->pr_usrreqs->pru_listen)
+		return (*so->so_proto->pr_usrreqs->pru_listen)(so);
+	return (EOPNOTSUPP);
 }
 
-#endif /* _KERNEL */
+static inline int
+pru_connect(struct socket *so, struct mbuf *nam)
+{
+	if (so->so_proto->pr_usrreqs->pru_connect)
+		return (*so->so_proto->pr_usrreqs->pru_connect)(so, nam);
+	return (EOPNOTSUPP);
+}
 
-#endif /* !_SYS_PROTOSW_H_ */
+static inline int
+pru_accept(struct socket *so, struct mbuf *nam)
+{
+	if (so->so_proto->pr_usrreqs->pru_accept)
+		return (*so->so_proto->pr_usrreqs->pru_accept)(so, nam);
+	return (EOPNOTSUPP);
+}
+
+static inline int
+pru_disconnect(struct socket *so)
+{
+	if (so->so_proto->pr_usrreqs->pru_disconnect)
+		return (*so->so_proto->pr_usrreqs->pru_disconnect)(so);
+	return (EOPNOTSUPP);
+}
+
+static inline int
+pru_shutdown(struct socket *so)
+{
+	return (*so->so_proto->pr_usrreqs->pru_shutdown)(so);
+}
+
+static inline void
+pru_rcvd(struct socket *so)
+{
+	(*so->so_proto->pr_usrreqs->pru_rcvd)(so);
+}
+
+static inline int
+pru_send(struct socket *so, struct mbuf *top, struct mbuf *addr,
+    struct mbuf *control)
+{
+	return (*so->so_proto->pr_usrreqs->pru_send)(so, top, addr, control);
+}
+
+static inline void
+pru_abort(struct socket *so)
+{
+	(*so->so_proto->pr_usrreqs->pru_abort)(so);
+}
+
+static inline int
+pru_control(struct socket *so, u_long cmd, caddr_t data, struct ifnet *ifp)
+{
+	if (so->so_proto->pr_usrreqs->pru_control)
+		return (*so->so_proto->pr_usrreqs->pru_control)(so,
+		    cmd, data, ifp);
+	return (EOPNOTSUPP);
+}
+
+static inline int
+pru_sense(struct socket *so, struct stat *ub)
+{
+	if (so->so_proto->pr_usrreqs->pru_sense)
+		return (*so->so_proto->pr_usrreqs->pru_sense)(so, ub);
+	return (0);
+}
+
+static inline int
+pru_rcvoob(struct socket *so, struct mbuf *m, int flags)
+{
+	if (so->so_proto->pr_usrreqs->pru_rcvoob)
+		return (*so->so_proto->pr_usrreqs->pru_rcvoob)(so, m, flags);
+	return (EOPNOTSUPP);
+}
+
+static inline int
+pru_sendoob(struct socket *so, struct mbuf *top, struct mbuf *addr,
+    struct mbuf *control)
+{
+	if (so->so_proto->pr_usrreqs->pru_sendoob)
+		return (*so->so_proto->pr_usrreqs->pru_sendoob)(so,
+		    top, addr, control);
+	m_freem(top);
+	m_freem(control);
+	return (EOPNOTSUPP);
+}
+
+static inline int
+pru_sockaddr(struct socket *so, struct mbuf *addr)
+{
+	return (*so->so_proto->pr_usrreqs->pru_sockaddr)(so, addr);
+}
+
+static inline int
+pru_peeraddr(struct socket *so, struct mbuf *addr)
+{
+	return (*so->so_proto->pr_usrreqs->pru_peeraddr)(so, addr);
+}
+
+static inline int
+pru_connect2(struct socket *so1, struct socket *so2)
+{
+	if (so1->so_proto->pr_usrreqs->pru_connect2)
+		return (*so1->so_proto->pr_usrreqs->pru_connect2)(so1, so2);
+	return (EOPNOTSUPP);
+}
+
+#endif
+
+#endif /* _SYS_PROTOSW_H_ */

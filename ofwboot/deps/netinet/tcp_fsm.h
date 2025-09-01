@@ -1,4 +1,5 @@
-/*	$NetBSD: tcp_fsm.h,v 1.16 2018/04/07 13:48:50 maxv Exp $	*/
+/*	$OpenBSD: tcp_fsm.h,v 1.10 2024/12/20 21:30:17 bluhm Exp $	*/
+/*	$NetBSD: tcp_fsm.h,v 1.6 1994/10/14 16:01:48 mycroft Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1993
@@ -44,7 +45,7 @@
 #define	TCPS_CLOSED		0	/* closed */
 #define	TCPS_LISTEN		1	/* listening for connection */
 #define	TCPS_SYN_SENT		2	/* active, have sent syn */
-#define	TCPS_SYN_RECEIVED	3	/* have send and received syn */
+#define	TCPS_SYN_RECEIVED	3	/* have sent and received syn */
 /* states < TCPS_ESTABLISHED are those where connections not established */
 #define	TCPS_ESTABLISHED	4	/* established */
 #define	TCPS_CLOSE_WAIT		5	/* rcvd fin, waiting for close */
@@ -58,8 +59,7 @@
 
 #define	TCPS_HAVERCVDSYN(s)	((s) >= TCPS_SYN_RECEIVED)
 #define	TCPS_HAVEESTABLISHED(s)	((s) >= TCPS_ESTABLISHED)
-#define	TCPS_HAVERCVDFIN(s) \
-    ((s) == TCPS_CLOSE_WAIT || ((s) >= TCPS_CLOSING && (s) != TCPS_FIN_WAIT_2))
+#define	TCPS_HAVERCVDFIN(s)	((s) >= TCPS_TIME_WAIT)
 
 #ifdef	TCPOUTFLAGS
 /*
@@ -68,29 +68,18 @@
  * determined by state, with the proviso that TH_FIN is sent only
  * if all data queued for output is included in the segment.
  */
-const u_char	tcp_outflags[TCP_NSTATES] = {
-	TH_RST|TH_ACK,	/* CLOSED */
-	0,		/* LISTEN */
-	TH_SYN,		/* SYN_SENT */
-	TH_SYN|TH_ACK,	/* SYN_RCVD */
-	TH_ACK,		/* ESTABLISHED */
-	TH_ACK,		/* CLOSE_WAIT */
-	TH_FIN|TH_ACK,	/* FIN_WAIT_1 */
-	TH_FIN|TH_ACK,	/* CLOSING */
-	TH_FIN|TH_ACK,	/* LAST_ACK */
-	TH_ACK,		/* FIN_WAIT_2 */
-	TH_ACK,		/* TIME_WAIT */
+const u_char tcp_outflags[TCP_NSTATES] = {
+    TH_RST|TH_ACK, 0, TH_SYN, TH_SYN|TH_ACK,
+    TH_ACK, TH_ACK,
+    TH_FIN|TH_ACK, TH_FIN|TH_ACK, TH_FIN|TH_ACK, TH_ACK, TH_ACK,
 };
-#endif
+#endif /* TCPOUTFLAGS */
 
 #ifdef	TCPSTATES
-const char * const tcpstates[] = {
+const char *const tcpstates[] = {
 	"CLOSED",	"LISTEN",	"SYN_SENT",	"SYN_RCVD",
 	"ESTABLISHED",	"CLOSE_WAIT",	"FIN_WAIT_1",	"CLOSING",
 	"LAST_ACK",	"FIN_WAIT_2",	"TIME_WAIT",
 };
-#elif defined(_KERNEL)
-extern const char * const tcpstates[];
-#endif
-
-#endif /* !_NETINET_TCP_FSM_H_ */
+#endif /* TCPSTATES */
+#endif /* _NETINET_TCP_FSM_H_ */

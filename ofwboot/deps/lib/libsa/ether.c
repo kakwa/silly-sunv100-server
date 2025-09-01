@@ -1,4 +1,5 @@
-/*	$NetBSD: ether.c,v 1.24 2019/03/31 20:08:45 christos Exp $	*/
+/*	$OpenBSD: ether.c,v 1.10 2014/11/19 20:28:56 miod Exp $	*/
+/*	$NetBSD: ether.c,v 1.8 1996/10/13 02:29:00 christos Exp $	*/
 
 /*
  * Copyright (c) 1992 Regents of the University of California.
@@ -41,20 +42,16 @@
 
 #include <sys/param.h>
 #include <sys/socket.h>
-#ifdef _STANDALONE
-#include <lib/libkern/libkern.h>
-#else
-#include <string.h>
-#endif
 
 #include <net/if.h>
-#include <net/if_ether.h>
 
 #include <netinet/in.h>
-#include <netinet/in_systm.h>
+#include <netinet/if_ether.h>
+#include <netinet/ip.h>
 
 #include "stand.h"
 #include "net.h"
+#include "netif.h"
 
 /* Caller must leave room for ethernet header in front!! */
 ssize_t
@@ -64,8 +61,8 @@ sendether(struct iodesc *d, void *pkt, size_t len, u_char *dea, int etype)
 	struct ether_header *eh;
 
 #ifdef ETHER_DEBUG
- 	if (debug)
-		printf("%s: called\n", __func__);
+	if (debug)
+		printf("sendether: called\n");
 #endif
 
 	eh = (struct ether_header *)pkt - 1;
@@ -76,11 +73,11 @@ sendether(struct iodesc *d, void *pkt, size_t len, u_char *dea, int etype)
 	eh->ether_type = htons(etype);
 
 	n = netif_put(d, eh, len);
-	if (n == -1 || (size_t)n < sizeof(*eh))
-		return -1;
+	if (n < 0 || (size_t)n < sizeof(*eh))
+		return (-1);
 
-	n -= (ssize_t)sizeof(*eh);
-	return n;
+	n -= sizeof(*eh);
+	return (n);
 }
 
 /*
@@ -89,36 +86,56 @@ sendether(struct iodesc *d, void *pkt, size_t len, u_char *dea, int etype)
  * NOTE: Caller must leave room for the Ether header.
  */
 ssize_t
-readether(struct iodesc *d, void *pkt, size_t len, saseconds_t tleft,
-	u_int16_t *etype)
+readether(struct iodesc *d, void *pkt, size_t len, time_t tleft,
+    u_int16_t *etype)
 {
 	ssize_t n;
 	struct ether_header *eh;
 
 #ifdef ETHER_DEBUG
- 	if (debug)
-		printf("%s: called\n", __func__);
+	if (debug)
+		printf("readether: called\n");
 #endif
 
 	eh = (struct ether_header *)pkt - 1;
 	len += sizeof(*eh);
 
 	n = netif_get(d, eh, len, tleft);
-	if (n == -1 || (size_t)n < sizeof(*eh))
-		return -1;
+	if (n < 0 || (size_t)n < sizeof(*eh))
+		return (-1);
 
 	/* Validate Ethernet address. */
-	if (memcmp(d->myea, eh->ether_dhost, ETHER_ADDR_LEN) != 0 &&
-	    memcmp(bcea, eh->ether_dhost, ETHER_ADDR_LEN) != 0) {
+	if (bcmp(d->myea, eh->ether_dhost, 6) != 0 &&
+	    bcmp(bcea, eh->ether_dhost, 6) != 0) {
 #ifdef ETHER_DEBUG
 		if (debug)
-			printf("%s: not ours (ea=%s)\n", __func__,
+			printf("readether: not ours (ea=%s)\n",
 			    ether_sprintf(eh->ether_dhost));
 #endif
-		return -1;
+		return (-1);
 	}
 	*etype = ntohs(eh->ether_type);
 
-	n -= (ssize_t)sizeof(*eh);
-	return n;
+	n -= sizeof(*eh);
+	return (n);
+}
+
+/*
+ * Convert Ethernet address to printable (loggable) representation.
+ */
+static const char digits[] = "0123456789abcdef";
+const char *
+ether_sprintf(const u_char *ap)
+{
+	int i;
+	static char etherbuf[18];
+	char *cp = etherbuf;
+
+	for (i = 0; i < 6; i++) {
+		*cp++ = digits[*ap >> 4];
+		*cp++ = digits[*ap++ & 0xf];
+		*cp++ = ':';
+	}
+	*--cp = 0;
+	return (etherbuf);
 }

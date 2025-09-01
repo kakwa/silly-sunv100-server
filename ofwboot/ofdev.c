@@ -1,4 +1,5 @@
-/*	$NetBSD: ofdev.c,v 1.37 2017/09/15 13:25:34 martin Exp $	*/
+/*	$OpenBSD: ofdev.c,v 1.40 2024/04/14 03:26:25 jsg Exp $	*/
+/*	$NetBSD: ofdev.c,v 1.1 2000/08/20 14:58:41 mrg Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996 Wolfgang Solfrank.
@@ -39,30 +40,30 @@
 #include <netinet/in.h>
 #endif
 
+#include <lib/libkern/funcs.h>
 #include <lib/libsa/stand.h>
 #include <lib/libsa/ufs.h>
-#include <lib/libsa/lfs.h>
+#include <lib/libsa/ufs2.h>
 #include <lib/libsa/cd9660.h>
 #ifdef NETBOOT
-#include <lib/libsa/nfs.h>
 #include <lib/libsa/tftp.h>
 #endif
-#include <lib/libkern/libkern.h>
+
+#ifdef SOFTRAID
+#include <sys/queue.h>
+#include <dev/softraidvar.h>
+#include "softraid_sparc64.h"
+#include "disk.h"
+#endif
 
 #include <dev/sun/disklabel.h>
-#include <dev/raidframe/raidframevar.h>
-
-#include <machine/promlib.h>
-
+#include "openfirm.h"
 #include "ofdev.h"
-#include "boot.h"
-#include "net.h"
+
+/* needed for DISKLABELV1_FFS_FRAGBLOCK */
+int	 ffs(int);
 
 extern char bootdev[];
-extern bool root_fs_quickseekable;
-
-struct btinfo_bootdev_unit bi_unit;
-bool bootinfo_pass_bootunit = false;
 
 /*
  * This is ugly.  A path on a sparc machine is something like this:
@@ -71,7 +72,7 @@ bool bootinfo_pass_bootunit = false;
  *
  */
 
-char *
+static char *
 filename(char *str, char *ppart)
 {
 	char *cp, *lp;
@@ -81,93 +82,83 @@ filename(char *str, char *ppart)
 
 	lp = str;
 	devtype[0] = 0;
-	*ppart = '\0';
+	*ppart = 0;
 	for (cp = str; *cp; lp = cp) {
 		/* For each component of the path name... */
 		while (*++cp && *cp != '/');
 		savec = *cp;
 		*cp = 0;
 		/* ...look whether there is a device with this name */
-		dhandle = prom_finddevice(str);
-		DPRINTF(("filename: prom_finddevice(%s) returned %x\n",
-		       str, dhandle));
+		dhandle = OF_finddevice(str);
+		DNPRINTF(BOOT_D_OFDEV, "filename: OF_finddevice(%s) says %x\n",
+		    str, dhandle);
 		*cp = savec;
 		if (dhandle == -1) {
-			/*
-			 * if not, lp is the delimiter between device and
-			 * path.  if the last component was a block device.
-			 */
-			if (strcmp(devtype, "block") == 0
-			    || strcmp(devtype, "scsi") == 0) {
+			/* if not, lp is the delimiter between device and path */
+			/* if the last component was a block device... */
+			if (!strcmp(devtype, "block")) {
 				/* search for arguments */
-				DPRINTF(("filename: hunting for arguments "
-				       "in %s\n", lp));
-				for (cp = lp; ; ) {
-					cp--;
-					if (cp < str ||
-					    cp[0] == '/' ||
-					    (cp[0] == ' ' && (cp+1) != lp &&
-					     cp[1] == '-'))
-						break;
-				}
-				if (cp >= str && *cp == '-')
-					/* found arguments, make firmware
-					   ignore them */
+				DNPRINTF(BOOT_D_OFDEV, "filename: hunting for "
+				    "arguments in %s\n", str);
+				for (cp = lp;
+				     --cp >= str && *cp != '/' && *cp != '-';);
+				if (cp >= str && *cp == '-') {
+					/* found arguments, make firmware ignore them */
 					*cp = 0;
-				for (cp = lp; *--cp && *cp != ',' 
-					&& *cp != ':';)
+					for (cp = lp; *--cp && *cp != ',';)
 						;
-				if (cp[0] == ':' && cp[1] >= 'a' &&
-				    cp[1] <= 'a' + MAXPARTITIONS) {
-					*ppart = cp[1];
-					cp[0] = '\0';
+					if (*++cp >= 'a' && *cp <= 'a' + MAXPARTITIONS)
+						*ppart = *cp;
 				}
 			}
-			DPRINTF(("filename: found %s\n",lp));
+			DNPRINTF(BOOT_D_OFDEV, "filename: found %s\n", lp);
 			return lp;
-		} else if (_prom_getprop(dhandle, "device_type", devtype,
-				sizeof devtype) < 0)
+		} else if (OF_getprop(dhandle, "device_type", devtype, sizeof devtype) < 0)
 			devtype[0] = 0;
 	}
-	DPRINTF(("filename: not found\n"));
+	DNPRINTF(BOOT_D_OFDEV, "filename: not found\n", lp);
 	return 0;
 }
 
-static int
-strategy(void *devdata, int rw, daddr_t blk, size_t size, void *buf, size_t *rsize)
+int
+strategy(void *devdata, int rw, daddr_t blk, size_t size, void *buf,
+    size_t *rsize)
 {
 	struct of_dev *dev = devdata;
 	u_quad_t pos;
 	int n;
 
-	if (rw != F_READ)
-		return EPERM;
+#ifdef SOFTRAID
+	/* Intercept strategy for softraid volumes. */
+	if (dev->type == OFDEV_SOFTRAID)
+		return sr_strategy(bootdev_dip->sr_vol, bootdev_dip->sr_handle,
+		    rw, blk, size, buf, rsize);
+#endif
 	if (dev->type != OFDEV_DISK)
 		panic("strategy");
 
-#ifdef NON_DEBUG
-	printf("strategy: block %lx, partition offset %lx, blksz %lx\n",
-	       (long)blk, (long)dev->partoff, (long)dev->bsize);
-	printf("strategy: seek position should be: %lx\n",
-	       (long)((blk + dev->partoff) * dev->bsize));
-#endif
+	DNPRINTF(BOOT_D_OFDEV, "strategy: block %lx, partition offset %lx, "
+	    "blksz %lx\n", (long)blk, (long)dev->partoff, (long)dev->bsize);
+	DNPRINTF(BOOT_D_OFDEV, "strategy: seek position should be: %lx\n",
+	    (long)((blk + dev->partoff) * dev->bsize));
 	pos = (u_quad_t)(blk + dev->partoff) * dev->bsize;
 
 	for (;;) {
-#ifdef NON_DEBUG
-		printf("strategy: seeking to %lx\n", (long)pos);
-#endif
-		if (prom_seek(dev->handle, pos) < 0)
+		DNPRINTF(BOOT_D_OFDEV, "strategy: seeking to %lx\n", (long)pos);
+		if (OF_seek(dev->handle, pos) < 0)
 			break;
-#ifdef NON_DEBUG
-		printf("strategy: reading %lx at %p\n", (long)size, buf);
-#endif
-		n = prom_read(dev->handle, buf, size);
+		DNPRINTF(BOOT_D_OFDEV, "strategy: reading %lx at %p\n",
+		    (long)size, buf);
+		if (rw == F_READ)
+			n = OF_read(dev->handle, buf, size);
+		else
+			n = OF_write(dev->handle, buf, size);
 		if (n == -2)
 			continue;
 		if (n < 0)
 			break;
-		*rsize = n;
+		if (rsize)
+			*rsize = n;
 		return 0;
 	}
 	return EIO;
@@ -182,12 +173,18 @@ devclose(struct open_file *of)
 	if (op->type == OFDEV_NET)
 		net_close(op);
 #endif
-	prom_close(op->handle);
+#ifdef SOFTRAID
+	if (op->type == OFDEV_SOFTRAID) {
+		op->handle = -1;
+		return 0;
+	}
+#endif
+	OF_close(op->handle);
 	op->handle = -1;
 	return 0;
 }
 
-static struct devsw ofdevsw[1] = {
+struct devsw devsw[1] = {
 	{
 		"OpenFirmware",
 		strategy,
@@ -196,22 +193,25 @@ static struct devsw ofdevsw[1] = {
 		noioctl
 	}
 };
-int ndevs = sizeof ofdevsw / sizeof ofdevsw[0];
-
+int ndevs = sizeof devsw / sizeof devsw[0];
 
 #ifdef SPARC_BOOT_UFS
-static struct fs_ops file_system_ufs[] = 
-{ FS_OPS(ufs), FS_OPS(ffsv2), FS_OPS(lfsv1), FS_OPS(lfsv2) };
+#error Local UFS disabled in this minimal build
 #endif
-#ifdef SPARC_BOOT_CD9660
-static struct fs_ops file_system_cd9660 = FS_OPS(cd9660);
+#ifdef SPARC_BOOT_HSFS
+static struct fs_ops file_system_cd9660 = {
+	cd9660_open, cd9660_close, cd9660_read, cd9660_write, cd9660_seek,
+	cd9660_stat, cd9660_readdir
+};
 #endif
 #ifdef NETBOOT
-static struct fs_ops file_system_nfs = FS_OPS(nfs);
-static struct fs_ops file_system_tftp = FS_OPS(tftp);
+static struct fs_ops file_system_tftp = {
+	tftp_open, tftp_close, tftp_read, tftp_write, tftp_seek,
+	tftp_stat, tftp_readdir
+};
 #endif
 
-struct fs_ops file_system[7];
+struct fs_ops file_system[4];
 int nfsys;
 
 static struct of_dev ofdev = {
@@ -219,7 +219,6 @@ static struct of_dev ofdev = {
 };
 
 char opened_name[256];
-int floppyboot;
 
 /************************************************************************
  *
@@ -242,62 +241,74 @@ sun_fstypes[8] = {
 };
 
 /*
+ * Given a struct sun_disklabel, assume it has an extended partition
+ * table and compute the correct value for sl_xpsum.
+ */
+static __inline u_int
+sun_extended_sum(struct sun_disklabel *sl, void *end)
+{
+	u_int sum, *xp, *ep;
+
+	xp = (u_int *)&sl->sl_xpmag;
+	ep = (u_int *)end;
+
+	sum = 0;
+	for (; xp < ep; xp++)
+		sum += *xp;
+	return (sum);
+}
+
+/*
  * Given a SunOS disk label, set lp to a BSD disk label.
- * Returns NULL on success, else an error string.
- *
  * The BSD label is cleared out before this is called.
  */
-static char *
-disklabel_sun_to_bsd(char *cp, struct disklabel *lp)
+static int
+disklabel_sun_to_bsd(struct sun_disklabel *sl, struct disklabel *lp)
 {
-	struct sun_disklabel *sl;
-	struct partition *npp;
+	struct sun_preamble *preamble = (struct sun_preamble *)sl;
+	struct sun_partinfo *ppp;
 	struct sun_dkpart *spp;
+	struct partition *npp;
+	u_short cksum = 0, *sp1, *sp2;
 	int i, secpercyl;
-	u_short cksum, *sp1, *sp2;
-
-	sl = (struct sun_disklabel *)cp;
 
 	/* Verify the XOR check. */
 	sp1 = (u_short *)sl;
 	sp2 = (u_short *)(sl + 1);
-	cksum = 0;
 	while (sp1 < sp2)
 		cksum ^= *sp1++;
 	if (cksum != 0)
-		return("SunOS disk label, bad checksum");
+		return (EINVAL);	/* SunOS disk label, bad checksum */
 
 	/* Format conversion. */
 	lp->d_magic = DISKMAGIC;
 	lp->d_magic2 = DISKMAGIC;
+	lp->d_flags = D_VENDOR;
 	memcpy(lp->d_packname, sl->sl_text, sizeof(lp->d_packname));
 
-	lp->d_secsize = 512;
-	lp->d_nsectors   = sl->sl_nsectors;
-	lp->d_ntracks    = sl->sl_ntracks;
+	lp->d_secsize = DEV_BSIZE;
+	lp->d_nsectors = sl->sl_nsectors;
+	lp->d_ntracks = sl->sl_ntracks;
 	lp->d_ncylinders = sl->sl_ncylinders;
 
 	secpercyl = sl->sl_nsectors * sl->sl_ntracks;
-	lp->d_secpercyl  = secpercyl;
-	lp->d_secperunit = secpercyl * sl->sl_ncylinders;
+	lp->d_secpercyl = secpercyl;
+	if (DL_GETDSIZE(lp) == 0)
+		DL_SETDSIZE(lp, (u_int64_t)secpercyl * sl->sl_ncylinders);
+	lp->d_version = 1;
 
-	lp->d_sparespercyl = sl->sl_sparespercyl;
-	lp->d_acylinders   = sl->sl_acylinders;
-	lp->d_rpm          = sl->sl_rpm;
-	lp->d_interleave   = sl->sl_interleave;
+	memcpy(&lp->d_uid, &sl->sl_uid, sizeof(lp->d_uid));
 
-	lp->d_npartitions = 8;
-	/* These are as defined in <ufs/ffs/fs.h> */
-	lp->d_bbsize = 8192;	/* XXX */
-	lp->d_sbsize = 8192;	/* XXX */
+	lp->d_acylinders = sl->sl_acylinders;
+
+	lp->d_npartitions = MAXPARTITIONS;
 
 	for (i = 0; i < 8; i++) {
 		spp = &sl->sl_part[i];
 		npp = &lp->d_partitions[i];
-		npp->p_offset = spp->sdkp_cyloffset * secpercyl;
-		npp->p_size = spp->sdkp_nsectors;
-		DPRINTF(("partition %d start %x size %x\n", i, (int)npp->p_offset, (int)npp->p_size));
-		if (npp->p_size == 0) {
+		DL_SETPOFFSET(npp, spp->sdkp_cyloffset * secpercyl);
+		DL_SETPSIZE(npp, spp->sdkp_nsectors);
+		if (DL_GETPSIZE(npp) == 0) {
 			npp->p_fstype = FS_UNUSED;
 		} else {
 			npp->p_fstype = sun_fstypes[i];
@@ -306,122 +317,176 @@ disklabel_sun_to_bsd(char *cp, struct disklabel *lp)
 				 * The sun label does not store the FFS fields,
 				 * so just set them with default values here.
 				 */
-				npp->p_fsize = 1024;
-				npp->p_frag = 8;
+				npp->p_fragblock =
+				    DISKLABELV1_FFS_FRAGBLOCK(2048, 8);
 				npp->p_cpg = 16;
+			}
+		}
+	}
+
+	/* Clear "extended" partition info, tentatively */
+	for (i = 0; i < SUNXPART; i++) {
+		npp = &lp->d_partitions[i+8];
+		DL_SETPOFFSET(npp, 0);
+		DL_SETPSIZE(npp, 0);
+		npp->p_fstype = FS_UNUSED;
+	}
+
+	/* Check to see if there's an "extended" partition table
+	 * SL_XPMAG partitions had checksums up to just before the
+	 * (new) sl_types variable, while SL_XPMAGTYP partitions have
+	 * checksums up to the just before the (new) sl_xxx1 variable.
+	 * Also, disklabels created prior to the addition of sl_uid will
+	 * have a checksum to just before the sl_uid variable.
+	 */
+	if ((sl->sl_xpmag == SL_XPMAG &&
+	    sun_extended_sum(sl, &sl->sl_types) == sl->sl_xpsum) ||
+	    (sl->sl_xpmag == SL_XPMAGTYP &&
+	    sun_extended_sum(sl, &sl->sl_uid) == sl->sl_xpsum) ||
+	    (sl->sl_xpmag == SL_XPMAGTYP &&
+	    sun_extended_sum(sl, &sl->sl_xxx1) == sl->sl_xpsum)) {
+		/*
+		 * There is.  Copy over the "extended" partitions.
+		 * This code parallels the loop for partitions a-h.
+		 */
+		for (i = 0; i < SUNXPART; i++) {
+			spp = &sl->sl_xpart[i];
+			npp = &lp->d_partitions[i+8];
+			DL_SETPOFFSET(npp, spp->sdkp_cyloffset * secpercyl);
+			DL_SETPSIZE(npp, spp->sdkp_nsectors);
+			if (DL_GETPSIZE(npp) == 0) {
+				npp->p_fstype = FS_UNUSED;
+				continue;
+			}
+			npp->p_fstype = FS_BSDFFS;
+			npp->p_fragblock =
+			    DISKLABELV1_FFS_FRAGBLOCK(2048, 8);
+			npp->p_cpg = 16;
+		}
+		if (sl->sl_xpmag == SL_XPMAGTYP) {
+			for (i = 0; i < MAXPARTITIONS; i++) {
+				npp = &lp->d_partitions[i];
+				npp->p_fstype = sl->sl_types[i];
+				npp->p_fragblock = sl->sl_fragblock[i];
+				npp->p_cpg = sl->sl_cpg[i];
+			}
+		}
+	} else if (preamble->sl_nparts <= 8) {
+		/*
+		 * A more traditional Sun label.  Recognise certain filesystem
+		 * types from it, if they are available.
+		 */
+		i = preamble->sl_nparts;
+		if (i == 0)
+			i = 8;
+
+		npp = &lp->d_partitions[i-1];
+		ppp = &preamble->sl_part[i-1];
+		for (; i > 0; i--, npp--, ppp--) {
+			if (npp->p_size == 0)
+				continue;
+			if ((ppp->spi_tag == 0) && (ppp->spi_flag == 0))
+				continue;
+
+			switch (ppp->spi_tag) {
+			case SPTAG_SUNOS_ROOT:
+			case SPTAG_SUNOS_USR:
+			case SPTAG_SUNOS_VAR:
+			case SPTAG_SUNOS_HOME:
+				npp->p_fstype = FS_BSDFFS;
+				npp->p_fragblock =
+				    DISKLABELV1_FFS_FRAGBLOCK(2048, 8);
+				npp->p_cpg = 16;
+				break;
+			case SPTAG_LINUX_EXT2:
+				npp->p_fstype = FS_EXT2FS;
+				break;
+			default:
+				/* FS_SWAP for _SUNOS_SWAP and _LINUX_SWAP? */
+				npp->p_fstype = FS_UNUSED;
+				break;
 			}
 		}
 	}
 
 	lp->d_checksum = 0;
 	lp->d_checksum = dkcksum(lp);
-	DPRINTF(("disklabel_sun_to_bsd: success!\n"));
-	return (NULL);
+	DNPRINTF(BOOT_D_OFDEV, "disklabel_sun_to_bsd: success!\n");
+	return (0);
 }
 
 /*
  * Find a valid disklabel.
  */
 static char *
-search_label(struct of_dev *devp, u_long off, char *buf,
-	     struct disklabel *lp, u_long off0)
+search_label(struct of_dev *devp, u_long off, char *buf, struct disklabel *lp,
+    u_long off0)
 {
-	size_t readsize;
 	struct disklabel *dlp;
 	struct sun_disklabel *slp;
+	size_t read;
 
-	/* minimal requirements for archtypal disk label */
-	if (lp->d_secperunit == 0)
-		lp->d_secperunit = 0x1fffffff;
-	lp->d_npartitions = 1;
-	if (lp->d_partitions[0].p_size == 0)
-		lp->d_partitions[0].p_size = 0x1fffffff;
-	lp->d_partitions[0].p_offset = 0;
+	/* minimal requirements for archetypal disk label */
+	if (DL_GETDSIZE(lp) == 0)
+		DL_SETDSIZE(lp, 0x1fffffff);
+	lp->d_npartitions = MAXPARTITIONS;
+	if (DL_GETPSIZE(&lp->d_partitions[0]) == 0)
+		DL_SETPSIZE(&lp->d_partitions[0], 0x1fffffff);
+	DL_SETPOFFSET(&lp->d_partitions[0], 0);
 
-	if (strategy(devp, F_READ, LABELSECTOR, DEV_BSIZE, buf, &readsize)
-	    || readsize != DEV_BSIZE)
+	if (strategy(devp, F_READ, off, DEV_BSIZE, buf, &read)
+	    || read != DEV_BSIZE)
 		return ("Cannot read label");
-	/* Check for a NetBSD disk label. */
+
+	/* Check for a disk label. */
 	dlp = (struct disklabel *) (buf + LABELOFFSET);
 	if (dlp->d_magic == DISKMAGIC) {
 		if (dkcksum(dlp))
-			return ("NetBSD disk label corrupted");
+			return ("corrupt disk label");
 		*lp = *dlp;
-		DPRINTF(("search_label: found NetBSD label\n"));
+		DNPRINTF(BOOT_D_OFDEV, "search_label: found disk label\n");
 		return (NULL);
 	}
 
 	/* Check for a Sun disk label (for PROM compatibility). */
-	slp = (struct sun_disklabel *) buf;
-	if (slp->sl_magic == SUN_DKMAGIC)
-		return (disklabel_sun_to_bsd(buf, lp));
+	slp = (struct sun_disklabel *)buf;
+	if (slp->sl_magic == SUN_DKMAGIC) {
+		if (disklabel_sun_to_bsd(slp, lp) != 0)
+			return ("corrupt disk label");
+		DNPRINTF(BOOT_D_OFDEV, "search_label: found disk label\n");
+		return (NULL);
+	}
 
-
-	memset(buf, 0, DEV_BSIZE);
 	return ("no disk label");
 }
 
-static void
-device_target_unit(const char *dev, int ihandle)
+int
+load_disklabel(struct of_dev *ofdev, struct disklabel *label)
 {
-	cell_t units[4], phandle, myself, depth = 0, odepth = 0, cnt;
-	char buf[256];
+	char buf[DEV_BSIZE];
+	size_t read;
+	int error = 0;
+	char *errmsg = NULL;
 
-	/* init the data passed to the kernel */
-	bootinfo_pass_bootunit = false;
-	memset(&bi_unit, 0, sizeof(bi_unit));
-
-	/* save old my-self value */
-	OF_interpret("my-self", 0, 1, &myself);
-	/* set our device as my-self */
-	OF_interpret("to my-self", 1, 0, HDL2CELL(ihandle));
-
-	/*
-	 * my-unit delivers a variable number of cells, we could
-	 * walk up the path and find a #address-cells value that
-	 * describes it, but it seems to just work this simple
-	 * way.
-	 */
-	OF_interpret("depth", 0, 1, &odepth);	
-	OF_interpret("my-unit depth", 0, 5, &depth,
-	    &units[0], &units[1], &units[2], &units[3]);
-	cnt = depth-odepth;
-
-	/*
-	 * Old versions of QEMU's OpenBIOS have a bug in the
-	 * CIF implementation for instance_to_package, test
-	 * for that explicitly here and work around it if needed.
-	 */
-	phandle = OF_instance_to_package(ihandle);	
-	OF_package_to_path(phandle, buf, sizeof(buf));
-	buf[sizeof(buf)-1] = 0;
-	if (strlen(buf) > 2 && strlen(dev) > 2 &&
-	    strncmp(buf, dev, strlen(buf)) != 0) {
-		DPRINTF(("OpenBIOS workaround: phandle %" PRIx32 "is %s, "
-		    "does not match %s\n", (uint32_t)phandle, buf, dev));
-		OF_interpret("my-self ihandle>non-interposed-phandle",
-		     0, 1, &phandle);
-		OF_package_to_path(phandle, buf, sizeof(buf));
-		DPRINTF(("new phandle %" PRIx32 " is %s\n",
-		    (uint32_t)phandle, buf));
+	DNPRINTF(BOOT_D_OFDEV, "load_disklabel: trying to read disklabel\n");
+	if (strategy(ofdev, F_READ,
+		     LABELSECTOR, DEV_BSIZE, buf, &read) != 0
+	    || read != DEV_BSIZE
+	    || (errmsg = getdisklabel(buf, label))) {
+#ifdef BOOT_DEBUG
+		if (errmsg)
+			DNPRINTF(BOOT_D_OFDEV,
+			    "load_disklabel: getdisklabel says %s\n", errmsg);
+#endif
+		errmsg = search_label(ofdev, LABELSECTOR, buf, label, 0);
+		if (errmsg) {
+			printf("load_disklabel: search_label says %s\n",
+			    errmsg);
+			error = ERDLAB;
+		}
 	}
 
-	bi_unit.phandle = phandle;
-	bi_unit.parent = OF_parent(phandle);
-	bi_unit.lun = units[cnt > 2 ? 3 : 1];
-	bi_unit.target = units[cnt > 2 ? 2 : 0];
-	if (cnt >= 4)
-		bi_unit.wwn = (uint64_t)units[0] << 32 | (uint32_t)units[1];
-	DPRINTF(("boot device package: %" PRIx32 ", parent: %" PRIx32 
-	    ", lun: %" PRIu32 ", target: %" PRIu32 ", wwn: %" PRIx64 "\n",
-	    bi_unit.phandle, bi_unit.parent, bi_unit.lun, bi_unit.target,
-	    bi_unit.wwn));
-
-	/* restore my-self */
-	OF_interpret("to my-self", 1, 0, myself);
-
-	/* now that we have gatherd all the details, pass them to the kernel */
-	bootinfo_pass_bootunit = true;
+	return (error);
 }
 
 int
@@ -429,208 +494,216 @@ devopen(struct open_file *of, const char *name, char **file)
 {
 	char *cp;
 	char partition;
-	char fname[256], devname[256];
-	union {
-		char buf[DEV_BSIZE];
-		struct disklabel label;
-	} b;
+	char fname[256];
+	char buf[DEV_BSIZE];
 	struct disklabel label;
-	int handle, part, try = 0;
-	size_t readsize;
-	char *errmsg = NULL, *pp = NULL, savedpart = 0;
+	int dhandle, ihandle, part, parent;
 	int error = 0;
-	bool get_target_unit = false;
+#ifdef SOFTRAID
+	char volno;
+#endif
 
+	nfsys = 0;
 	if (ofdev.handle != -1)
-		panic("devopen: ofdev already in use");
-	if (of->f_flags != F_READ)
-		return EPERM;
-	DPRINTF(("devopen: you want %s\n", name));
-	strcpy(fname, name);
-	cp = filename(fname, &partition);
-	if (cp) {
-		strcpy(b.buf, cp);
-		*cp = 0;
-	}
-	if (!cp || !b.buf[0])
-		strcpy(b.buf, DEFAULT_KERNEL);
-	if (!*fname)
-		strcpy(fname, bootdev);
-	strcpy(opened_name, fname);
-	if (partition) {
-		cp = opened_name + strlen(opened_name);
-		*cp++ = ':';
-		*cp++ = partition;
-		*cp = 0;
-	}
-	*file = opened_name + strlen(opened_name);
-	if (b.buf[0] != '/')
-		strcat(opened_name, "/");
-	strcat(opened_name, b.buf);
-	DPRINTF(("devopen: trying %s\n", fname));
-	if ((handle = prom_finddevice(fname)) == -1)
-		return ENOENT;
-	DPRINTF(("devopen: found %s\n", fname));
-	if (_prom_getprop(handle, "name", b.buf, sizeof b.buf) < 0)
-		return ENXIO;
-	DPRINTF(("devopen: %s is called %s\n", fname, b.buf));
-	floppyboot = !strcmp(b.buf, "floppy");
-	if (_prom_getprop(handle, "device_type", b.buf, sizeof b.buf) < 0)
-		return ENXIO;
-	DPRINTF(("devopen: %s is a %s device\n", fname, b.buf));
-	if (strcmp(b.buf, "block") == 0 || strcmp(b.buf, "scsi") == 0) {
+		panic("devopen");
+	DNPRINTF(BOOT_D_OFDEV, "devopen: you want %s\n", name);
+	if (strlcpy(fname, name, sizeof fname) >= sizeof fname)
+		return ENAMETOOLONG;
+#ifdef SOFTRAID
+	if (bootdev_dip) {
+		if (fname[0] == 's' && fname[1] == 'r' &&
+		    '0' <= fname[2] && fname[2] <= '9') {
+			/* We only support read-only softraid. */
+			of->f_flags |= F_NOWRITE;
 
-		get_target_unit = true;
-
-		pp = strrchr(fname, ':');
-		if (pp && pp[1] >= 'a' && pp[1] <= 'f' && pp[2] == 0) {
-			savedpart = pp[1];
-		} else {
-			savedpart = 'a';
-			handle = prom_open(fname);
-			if (handle != -1) {
-				OF_instance_to_path(handle, devname,
-				    sizeof(devname));
-				DPRINTF(("real path: %s\n", devname));
-				prom_close(handle);
-				pp = devname + strlen(devname);
-				if (pp > devname + 3) pp -= 2;
-				if (pp[0] == ':')
-					savedpart = pp[1];
-			}
-			pp = fname + strlen(fname);
-			pp[0] = ':';
-			pp[2] = '\0';
-		}
-		pp[1] = 'c';
-		DPRINTF(("devopen: replacing by whole disk device %s\n",
-		    fname));
-		if (savedpart)
-			partition = savedpart;
-	}
-
-open_again:
-	DPRINTF(("devopen: opening %s\n", fname));
-	if ((handle = prom_open(fname)) == -1) {
-		DPRINTF(("devopen: open of %s failed\n", fname));
-		if (pp && savedpart) {
-			if (try == 0) {
-				pp[0] = '\0';
-				try = 1;
+			volno = fname[2];
+			if ('a' <= fname[3] &&
+			    fname[3] <= 'a' + MAXPARTITIONS) {
+				partition = fname[3];
+				if (fname[4] == ':')
+					cp = &fname[5];
+				else
+					cp = &fname[4];
 			} else {
-				pp[0] = ':';
-				pp[1] = savedpart;
-				pp = NULL;
-				savedpart = '\0';
+				partition = 'a';
+				cp = &fname[3];
 			}
-			goto open_again;
+		} else {
+			volno = '0';
+			partition = 'a';
+			cp = &fname[0];
 		}
+		snprintf(buf, sizeof buf, "sr%c%c:", volno, partition);
+		if (strlcpy(opened_name, buf, sizeof opened_name)
+		    >= sizeof opened_name)
+			return ENAMETOOLONG;
+		*file = opened_name + strlen(opened_name);
+		if (!*cp) {
+			if (strlcpy(buf, DEFAULT_KERNEL, sizeof buf)
+			    >= sizeof buf)
+				return ENAMETOOLONG;
+		} else {
+			if (snprintf(buf, sizeof buf, "%s%s",
+			    *cp == '/' ? "" : "/", cp) >= sizeof buf)
+				return ENAMETOOLONG;
+		}
+		if (strlcat(opened_name, buf, sizeof opened_name) >=
+		    sizeof opened_name)
+			return ENAMETOOLONG;
+	} else {
+#endif
+		cp = filename(fname, &partition);
+		if (cp) {
+			if (strlcpy(buf, cp, sizeof buf) >= sizeof buf)
+				return ENAMETOOLONG;
+			*cp = 0;
+		}
+		if (!cp || !*buf) {
+			if (strlcpy(buf, DEFAULT_KERNEL, sizeof buf)
+			    >= sizeof buf)
+				return ENAMETOOLONG;
+		}
+		if (!*fname) {
+			if (strlcpy(fname, bootdev, sizeof fname)
+			    >= sizeof fname)
+				return ENAMETOOLONG;
+		}
+		if (strlcpy(opened_name, fname,
+		    partition ? (sizeof opened_name) - 2 : sizeof opened_name)
+		    >= sizeof opened_name)
+			return ENAMETOOLONG;
+		if (partition) {
+			cp = opened_name + strlen(opened_name);
+			*cp++ = ':';
+			*cp++ = partition;
+			*cp = 0;
+		}
+		if (*buf != '/') {
+			if (strlcat(opened_name, "/", sizeof opened_name) >=
+			    sizeof opened_name)
+				return ENAMETOOLONG;
+		}
+		if (strlcat(opened_name, buf, sizeof opened_name) >=
+		    sizeof opened_name)
+			return ENAMETOOLONG;
+		*file = opened_name + strlen(fname) + 1;
+#ifdef SOFTRAID
+	}
+#endif
+	DNPRINTF(BOOT_D_OFDEV, "devopen: trying %s\n", fname);
+#ifdef SOFTRAID
+	if (bootdev_dip) {
+		/* Redirect to the softraid boot volume. */
+		struct partition *pp;
+
+		bzero(&ofdev, sizeof ofdev);
+		ofdev.type = OFDEV_SOFTRAID;
+
+		if (partition) {
+			if (partition < 'a' ||
+			    partition >= 'a' + MAXPARTITIONS) {
+				printf("invalid partition '%c'\n", partition);
+				return EINVAL;
+			}
+			part = partition - 'a';
+			pp = &bootdev_dip->disklabel.d_partitions[part];
+			if (pp->p_fstype == FS_UNUSED || pp->p_size == 0) {
+				printf("invalid partition '%c'\n", partition);
+				return EINVAL;
+			}
+			bootdev_dip->sr_vol->sbv_part = partition;
+		} else
+			bootdev_dip->sr_vol->sbv_part = 'a';
+
+		of->f_dev = devsw;
+		of->f_devdata = &ofdev;
+
+#ifdef SPARC_BOOT_UFS
+		bcopy(&file_system_ufs, &file_system[nfsys++], sizeof file_system[0]);
+		bcopy(&file_system_ufs2, &file_system[nfsys++], sizeof file_system[0]);
+#else
+#error "-DSOFTRAID requires -DSPARC_BOOT_UFS"
+#endif
+		return 0;
+	}
+#endif
+	if ((dhandle = OF_finddevice(fname)) == -1)
+		return ENOENT;
+
+	DNPRINTF(BOOT_D_OFDEV, "devopen: found %s\n", fname);
+	if (OF_getprop(dhandle, "name", buf, sizeof buf) < 0)
+		return ENXIO;
+	DNPRINTF(BOOT_D_OFDEV, "devopen: %s is called %s\n", fname, buf);
+	if (OF_getprop(dhandle, "device_type", buf, sizeof buf) < 0)
+		return ENXIO;
+	DNPRINTF(BOOT_D_OFDEV, "devopen: %s is a %s device\n", fname, buf);
+	DNPRINTF(BOOT_D_OFDEV, "devopen: opening %s\n", fname);
+	if ((ihandle = OF_open(fname)) == -1) {
+		DNPRINTF(BOOT_D_OFDEV, "devopen: open of %s failed\n", fname);
 		return ENXIO;
 	}
-	DPRINTF(("devopen: %s is now open\n", fname));
-
-	if (get_target_unit)
-		device_target_unit(fname, handle);
-
-	memset(&ofdev, 0, sizeof ofdev);
-	ofdev.handle = handle;
-	if (strcmp(b.buf, "block") == 0 || strcmp(b.buf, "scsi") == 0) {
-		ofdev.type = OFDEV_DISK;
-		ofdev.bsize = DEV_BSIZE;
-		/* First try to find a disklabel without MBR partitions */
-		DPRINTF(("devopen: trying to read disklabel\n"));
-		if (strategy(&ofdev, F_READ,
-			     LABELSECTOR, DEV_BSIZE, b.buf, &readsize) != 0
-		    || readsize != DEV_BSIZE
-		    || (errmsg = getdisklabel(b.buf, &label))) {
-			if (errmsg) {
-				DPRINTF(("devopen: getdisklabel returned %s\n",
-					errmsg));
-			}
-			/* Else try MBR partitions */
-			errmsg = search_label(&ofdev, 0, b.buf, &label, 0);
-			if (errmsg) {
-				printf("devopen: search_label returned %s\n", errmsg);
-				error = ERDLAB;
-			}
-			if (error && error != ERDLAB)
+	DNPRINTF(BOOT_D_OFDEV, "devopen: %s is now open\n", fname);
+	bzero(&ofdev, sizeof ofdev);
+	ofdev.handle = ihandle;
+	ofdev.type = OFDEV_DISK;
+	ofdev.bsize = DEV_BSIZE;
+	if (!strcmp(buf, "block")) {
+		error = load_disklabel(&ofdev, &label);
+		if (error && error != ERDLAB)
+			goto bad;
+		else if (error == ERDLAB) {
+			if (partition)
+				/* User specified a partition, but there is none */
 				goto bad;
-		}
-
-		if (error == ERDLAB) {
 			/* No, label, just use complete disk */
 			ofdev.partoff = 0;
-			if (pp && savedpart) {
-				pp[1] = savedpart;
-				prom_close(handle);
-				if ((handle = prom_open(fname)) == -1) {
-					DPRINTF(("devopen: open of %s failed\n",
-						fname));
-					return ENXIO;
-				}
-				ofdev.handle = handle;
-				DPRINTF(("devopen: back to original device %s\n",
-					fname));
-			}
 		} else {
 			part = partition ? partition - 'a' : 0;
 			ofdev.partoff = label.d_partitions[part].p_offset;
-			DPRINTF(("devopen: setting partition %d offset %lx\n",
-			       part, ofdev.partoff));
-			if (label.d_partitions[part].p_fstype == FS_RAID) {
-				ofdev.partoff += RF_PROTECTED_SECTORS;
-				DPRINTF(("devopen: found RAID partition, "
-				    "adjusting offset to %lx\n", ofdev.partoff));
-			}
+			DNPRINTF(BOOT_D_OFDEV, "devopen: setting partition %d "
+			    "offset %x\n", part, ofdev.partoff);
 		}
 
-		nfsys = 0;
-		of->f_dev = ofdevsw;
+		of->f_dev = devsw;
 		of->f_devdata = &ofdev;
+
+		/* Some PROMS have buggy writing code for IDE block devices */
+		parent = OF_parent(dhandle);
+		if (parent && OF_getprop(parent, "device_type", buf,
+		    sizeof(buf)) > 0 && strcmp(buf, "ide") == 0) {
+			DNPRINTF(BOOT_D_OFDEV,
+			    "devopen: Disable writing for IDE block device\n");
+			of->f_flags |= F_NOWRITE;
+		}
+
 #ifdef SPARC_BOOT_UFS
-		memcpy(&file_system[nfsys++], &file_system_ufs[0], sizeof file_system[0]);
-		memcpy(&file_system[nfsys++], &file_system_ufs[1], sizeof file_system[0]);
-		memcpy(&file_system[nfsys++], &file_system_ufs[2], sizeof file_system[0]);
-		memcpy(&file_system[nfsys++], &file_system_ufs[3], sizeof file_system[0]);
+		bcopy(&file_system_ufs, &file_system[nfsys++], sizeof file_system[0]);
+		bcopy(&file_system_ufs2, &file_system[nfsys++], sizeof file_system[0]);
 #endif
-#ifdef SPARC_BOOT_CD9660
-		memcpy(&file_system[nfsys++], &file_system_cd9660, sizeof file_system[0]);
+#ifdef SPARC_BOOT_HSFS
+		bcopy(&file_system_cd9660, &file_system[nfsys++],
+		    sizeof file_system[0]);
 #endif
-		DPRINTF(("devopen: return 0\n"));
+		DNPRINTF(BOOT_D_OFDEV, "devopen: return 0\n");
 		return 0;
 	}
 #ifdef NETBOOT
-	if (!strcmp(b.buf, "network")) {
-		if ((error = net_open(&ofdev)) != 0)
-			goto bad;
-
+	if (!strcmp(buf, "network")) {
 		ofdev.type = OFDEV_NET;
-		of->f_dev = ofdevsw;
+		of->f_dev = devsw;
 		of->f_devdata = &ofdev;
-
-		if (!strncmp(*file,"/tftp:",6)) {
-			*file += 6;
-			memcpy(&file_system[0], &file_system_tftp, sizeof file_system[0]);
-			if (net_tftp_bootp((int **)&of->f_devdata)) {
-				net_close(&ofdev);
-				goto bad;
-			}
-			root_fs_quickseekable = false;
-		} else {
-			memcpy(&file_system[0], &file_system_nfs, sizeof file_system[0]);
-			if ((error = net_mountroot()) != 0) {
-				net_close(&ofdev);
-				goto bad;
-			}
-		}
+		bcopy(&file_system_tftp, file_system, sizeof file_system[0]);
 		nfsys = 1;
+		if ((error = net_open(&ofdev)))
+			goto bad;
 		return 0;
 	}
 #endif
 	error = EFTYPE;
 bad:
-	DPRINTF(("devopen: error %d, cannot open device\n", error));
-	prom_close(handle);
+	DNPRINTF(BOOT_D_OFDEV, "devopen: error %d, cannot open device\n",
+	    error);
+	OF_close(ihandle);
 	ofdev.handle = -1;
 	return error;
 }

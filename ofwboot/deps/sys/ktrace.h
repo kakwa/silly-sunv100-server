@@ -1,4 +1,5 @@
-/*	$NetBSD: ktrace.h,v 1.71 2025/04/06 19:13:06 riastradh Exp $	*/
+/*	$OpenBSD: ktrace.h,v 1.50 2024/07/27 02:10:26 guenther Exp $	*/
+/*	$NetBSD: ktrace.h,v 1.12 1996/02/04 02:12:29 christos Exp $	*/
 
 /*
  * Copyright (c) 1988, 1993
@@ -28,19 +29,13 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)ktrace.h	8.2 (Berkeley) 2/19/95
+ *	@(#)ktrace.h	8.1 (Berkeley) 6/2/93
  */
 
-#ifndef _SYS_KTRACE_H_
-#define _SYS_KTRACE_H_
-
-#include <sys/param.h>
-
-#include <sys/mutex.h>
-#include <sys/lwp.h>
+#include <sys/uio.h>
+#include <sys/syslimits.h>
 #include <sys/signal.h>
 #include <sys/time.h>
-#include <sys/uio.h>
 
 /*
  * operations to ktrace system call  (KTROP(op))
@@ -48,8 +43,7 @@
 #define KTROP_SET		0	/* set trace points */
 #define KTROP_CLEAR		1	/* clear trace points */
 #define KTROP_CLEARFILE		2	/* stop all tracing to file */
-#define	KTROP_MASK		0x3
-#define	KTROP(o)		((o)&KTROP_MASK) /* macro to extract operation */
+#define	KTROP(o)		((o)&3)	/* macro to extract operation */
 /*
  * flags (ORed in with operation)
  */
@@ -59,57 +53,22 @@
  * ktrace record header
  */
 struct ktr_header {
-	int	ktr_len;		/* length of record minus length of old header */
-#if BYTE_ORDER == LITTLE_ENDIAN
-	short	ktr_type;		/* trace record type */
-	short	ktr_version;		/* trace record version */
-#else
-	short	ktr_version;		/* trace record version */
-	short	ktr_type;		/* trace record type */
-#endif
+	uint	ktr_type;		/* trace record type */
 	pid_t	ktr_pid;		/* process id */
-	char	ktr_comm[MAXCOMLEN+1];	/* command name */
-	union {
-		struct { /* v0 */
-			struct {
-				int32_t tv_sec;
-				long tv_usec;
-			} _tv;
-			const void *_buf;
-		} _v0;
-		struct { /* v1 */
-			struct {
-				int32_t tv_sec;
-				long tv_nsec;
-			} _ts;
-			lwpid_t _lid;
-		} _v1;
-		struct { /* v2 */
-			struct timespec _ts;
-			lwpid_t _lid;
-		} _v2;
-	} _v;
+	pid_t	ktr_tid;		/* thread id */
+	struct	timespec ktr_time;	/* timestamp */
+	char	ktr_comm[_MAXCOMLEN];	/* command name, incl NUL */
+	size_t	ktr_len;		/* length of buf */
 };
-
-#define ktr_lid		_v._v2._lid
-#define ktr_olid	_v._v1._lid
-#define ktr_time	_v._v2._ts
-#define ktr_otv		_v._v0._tv
-#define ktr_ots		_v._v1._ts
-#define ktr_ts		_v._v2._ts
-#define ktr_unused	_v._v0._buf
-
-#define	KTR_SHIMLEN	offsetof(struct ktr_header, ktr_pid)
-
-/*
- * Test for kernel trace point
- */
-#define KTRPOINT(p, type)	\
-	(((p)->p_traceflag & (1<<(type))) != 0)
 
 /*
  * ktrace record types
  */
+
+ /*
+ * KTR_START - start of trace record, one per ktrace(KTROP_SET) syscall
+ */
+#define KTR_START	0x4b545200	/* "KTR" */
 
 /*
  * KTR_SYSCALL - system call record
@@ -128,11 +87,12 @@ struct ktr_syscall {
  */
 #define KTR_SYSRET	2
 struct ktr_sysret {
-	short	ktr_code;
-	short	ktr_eosys;		/* XXX unused */
+	int	ktr_code;
 	int	ktr_error;
-	__register_t ktr_retval;
-	__register_t ktr_retval_1;
+	/*
+	 * If ktr_error is zero, then followed by retval: register_t for
+	 * all syscalls except lseek(), which uses long long
+	 */
 };
 
 /*
@@ -160,82 +120,64 @@ struct ktr_genio {
 struct ktr_psig {
 	int	signo;
 	sig_t	action;
-	sigset_t mask;
+	int	mask;
 	int	code;
+	siginfo_t si;
+};
+
+/*
+ * KTR_STRUCT - misc. structs
+ */
+#define KTR_STRUCT	8
 	/*
-	 * followed by optional siginfo_t
+	 * record contains null-terminated struct name followed by
+	 * struct contents
 	 */
-};
-
-/*
- * KTR_CSW - trace context switches
- */
-#define KTR_CSW		6
-struct ktr_csw {
-	int	out;	/* 1 if switch out, 0 if switch in */
-	int	user;	/* 1 if usermode (ivcsw), 0 if kernel (vcsw) */
-};
-
-/*
- * KTR_EMUL - emulation change
- */
-#define KTR_EMUL	7
-	/* record contains emulation name */
+struct sockaddr;
+struct stat;
 
 /*
  * KTR_USER - user record
  */
-#define	KTR_USER	8
+#define KTR_USER	9
 #define KTR_USER_MAXIDLEN	20
 #define KTR_USER_MAXLEN		2048	/* maximum length of passed data */
 struct ktr_user {
-	char 	ktr_id[KTR_USER_MAXIDLEN];	/* string id of caller */
+	char    ktr_id[KTR_USER_MAXIDLEN];      /* string id of caller */
 	/*
 	 * Followed by ktr_len - sizeof(struct ktr_user) of user data.
 	 */
 };
 
 /*
- * KTR_EXEC_ARG, KTR_EXEC_ENV - Arguments and environment from exec
+ * KTR_EXECARGS and KTR_EXECENV - args and environment records
  */
-#define KTR_EXEC_ARG		10
-#define KTR_EXEC_ENV		11
-	/* record contains arg/env string */
+#define KTR_EXECARGS	10
+#define KTR_EXECENV	11
+
 
 /*
- * KTR_SAUPCALL - scheduler activated upcall.
- *
- * The structure is no longer used, but retained for compatibility.
+ * KTR_PLEDGE - details of pledge violation
  */
-#define	KTR_SAUPCALL	13
-struct ktr_saupcall {
-	int ktr_type;
-	int ktr_nevent;
-	int ktr_nint;
-	void *ktr_sas;
-	void *ktr_ap;
-	/*
-	 * followed by nevent sa_t's from sas[]
-	 */
+#define	KTR_PLEDGE	12
+struct ktr_pledge {
+	int		error;
+	int		syscall;
+	uint64_t	code;
 };
 
 /*
- * KTR_MIB - MIB name and data
+ * KTR_PINSYSCALL - details of pinsyscall violation
  */
-#define KTR_MIB		14
-	/* Record contains MIB name */
-
-/*
- * KTR_EXEC_FD - Opened file descriptor from exec
- */
-#define KTR_EXEC_FD		15
-struct ktr_execfd {
-	int   ktr_fd;
-	u_int ktr_dtype; /* one of DTYPE_* constants */
+#define	KTR_PINSYSCALL	13
+struct ktr_pinsyscall {
+	int		error;
+	int		syscall;
+	vaddr_t		addr;
 };
 
 /*
- * kernel trace points (in p_traceflag)
+ * kernel trace points (in ps_traceflag)
  */
 #define KTRFAC_MASK	0x00ffffff
 #define KTRFAC_SYSCALL	(1<<KTR_SYSCALL)
@@ -243,49 +185,18 @@ struct ktr_execfd {
 #define KTRFAC_NAMEI	(1<<KTR_NAMEI)
 #define KTRFAC_GENIO	(1<<KTR_GENIO)
 #define	KTRFAC_PSIG	(1<<KTR_PSIG)
-#define KTRFAC_CSW	(1<<KTR_CSW)
-#define KTRFAC_EMUL	(1<<KTR_EMUL)
-#define	KTRFAC_USER	(1<<KTR_USER)
-#define KTRFAC_EXEC_ARG	(1<<KTR_EXEC_ARG)
-#define KTRFAC_EXEC_ENV	(1<<KTR_EXEC_ENV)
-#define	KTRFAC_MIB	(1<<KTR_MIB)
-#define	KTRFAC_EXEC_FD	(1<<KTR_EXEC_FD)
-
-#define __KTRACE_FLAG_BITS \
-    "\177\020" \
-    "b\1SYSCALL\0" \
-    "b\2SYSRET\0" \
-    "b\3NAMEI\0" \
-    "b\4GENIO\0" \
-    "b\5PSIG\0" \
-    "b\6CSW\0" \
-    "b\7EMUL\0" \
-    "b\10USER\0" \
-    "b\12EXEC_ARG\0" \
-    "b\13EXEC_ENV\0" \
-    "b\15SAUPCALL\0" \
-    "b\16MIB\0" \
-    "b\17EXEC_FD\0" \
-    "f\30\4VERSION\0" \
-    "b\34TRC_EMUL\0" \
-    "b\36INHERIT\0" \
-    "b\37PERSISTENT\0"
+#define KTRFAC_STRUCT   (1<<KTR_STRUCT)
+#define KTRFAC_USER	(1<<KTR_USER)
+#define KTRFAC_EXECARGS	(1<<KTR_EXECARGS)
+#define KTRFAC_EXECENV	(1<<KTR_EXECENV)
+#define	KTRFAC_PLEDGE	(1<<KTR_PLEDGE)
+#define	KTRFAC_PINSYSCALL	(1<<KTR_PINSYSCALL)
 
 /*
- * trace flags (also in p_traceflags)
+ * trace flags (also in ps_traceflag)
  */
-#define KTRFAC_PERSISTENT	0x80000000	/* persistent trace across sugid
-						   exec (exclusive) */
+#define KTRFAC_ROOT	0x80000000U	/* root set this trace */
 #define KTRFAC_INHERIT	0x40000000	/* pass trace flags to children */
-#define KTRFAC_TRC_EMUL	0x10000000	/* ktrace KTR_EMUL before next trace */
-#define	KTRFAC_VER_MASK	0x0f000000	/* record version mask */
-#define	KTRFAC_VER_SHIFT	24	/* record version shift */
-
-#define	KTRFAC_VERSION(tf)	(((tf) & KTRFAC_VER_MASK) >> KTRFAC_VER_SHIFT)
-
-#define	KTRFACv0	(0 << KTRFAC_VER_SHIFT)
-#define	KTRFACv1	(1 << KTRFAC_VER_SHIFT)
-#define	KTRFACv2	(2 << KTRFAC_VER_SHIFT)
 
 #ifndef	_KERNEL
 
@@ -293,179 +204,74 @@ struct ktr_execfd {
 
 __BEGIN_DECLS
 int	ktrace(const char *, int, int, pid_t);
-int	fktrace(int, int, int, pid_t);
-int	utrace(const char *, void *, size_t);
+int	utrace(const char *, const void *, size_t);
 __END_DECLS
 
 #else
 
-struct syncobj;
+/*
+ * Test for kernel trace point
+ */
+#define KTRPOINT(p, type)	\
+	((p)->p_p->ps_traceflag & (1<<(type)) && ((p)->p_flag & P_INKTR) == 0)
 
-void ktrinit(void);
-void ktrderef(struct proc *);
-void ktradref(struct proc *);
+void ktrgenio(struct proc *, int, enum uio_rw, struct iovec *, ssize_t);
+void ktrnamei(struct proc *, char *);
+void ktrpsig(struct proc *, int, sig_t, int, int, siginfo_t *);
+void ktrsyscall(struct proc *, register_t, size_t, register_t []);
+void ktrsysret(struct proc *, register_t, int, const register_t [2]);
+int ktruser(struct proc *, const char *, const void *, size_t);
+void ktrexec(struct proc *, int, const char *, ssize_t);
+void ktrpledge(struct proc *, int, uint64_t, int);
+void ktrpinsyscall(struct proc *, int, int, vaddr_t);
 
-extern kmutex_t ktrace_lock;
-extern int ktrace_on;
+void ktrcleartrace(struct process *);
+void ktrsettrace(struct process *, int, struct vnode *, struct ucred *);
 
-int ktruser(const char *, void *, size_t, int);
-bool ktr_point(int);
+void    ktrstruct(struct proc *, const char *, const void *, size_t);
 
-void ktr_csw(int, int, const struct syncobj *);
-void ktr_emul(void);
-void ktr_geniov(int, enum uio_rw, struct iovec *, size_t, int);
-void ktr_genio(int, enum uio_rw, const void *, size_t, int);
-void ktr_mibio(int, enum uio_rw, const void *, size_t, int);
-void ktr_namei(const char *, size_t);
-void ktr_namei2(const char *, size_t, const char *, size_t);
-void ktr_psig(int, sig_t, const sigset_t *, const ksiginfo_t *);
-void ktr_syscall(register_t, const register_t [], int);
-void ktr_sysret(register_t, int, register_t *);
-void ktr_kuser(const char *, const void *, size_t);
-void ktr_mib(const int *a , u_int b);
-void ktr_execarg(const void *, size_t);
-void ktr_execenv(const void *, size_t);
-void ktr_execfd(int, u_int);
-
-int  ktrace_common(lwp_t *, int, int, int, file_t **);
-
-static __inline int
-ktrenter(lwp_t *l)
-{
-
-	if ((l->l_pflag & LP_KTRACTIVE) != 0)
-		return 1;
-	l->l_pflag |= LP_KTRACTIVE;
-	return 0;
-}
-
-static __inline void
-ktrexit(lwp_t *l)
-{
-
-	l->l_pflag &= ~LP_KTRACTIVE;
-}
-
-static __inline bool
-ktrpoint(int fac)
-{
-    return __predict_false(ktrace_on) && __predict_false(ktr_point(1 << fac));
-}
-
-static __inline void
-ktrcsw(int a, int b, const struct syncobj *c)
-{
-	if (__predict_false(ktrace_on))
-		ktr_csw(a, b, c);
-}
-
-static __inline void
-ktremul(void)
-{
-	if (__predict_false(ktrace_on))
-		ktr_emul();
-}
-
-static __inline void
-ktrgenio(int a, enum uio_rw b, const void *c, size_t d, int e)
-{
-	if (__predict_false(ktrace_on))
-		ktr_genio(a, b, c, d, e);
-}
-
-static __inline void
-ktrgeniov(int a, enum uio_rw b, struct iovec *c, int d, int e)
-{
-	if (__predict_false(ktrace_on))
-		ktr_geniov(a, b, c, d, e);
-}
-
-static __inline void
-ktrmibio(int a, enum uio_rw b, const void *c, size_t d, int e)
-{
-	if (__predict_false(ktrace_on))
-		ktr_mibio(a, b, c, d, e);
-}
-
-static __inline void
-ktrnamei(const char *a, size_t b)
-{
-	if (__predict_false(ktrace_on))
-		ktr_namei(a, b);
-}
-
-static __inline void
-ktrnamei2(const char *a, size_t b, const char *c, size_t d)
-{
-	if (__predict_false(ktrace_on))
-		ktr_namei2(a, b, c, d);
-}
-
-static __inline void
-ktrpsig(int a, sig_t b, const sigset_t *c, const ksiginfo_t * d)
-{
-	if (__predict_false(ktrace_on))
-		ktr_psig(a, b, c, d);
-}
-
-static __inline void
-ktrsyscall(register_t code, const register_t args[], int narg)
-{
-	if (__predict_false(ktrace_on))
-		ktr_syscall(code, args, narg);
-}
-
-static __inline void
-ktrsysret(register_t a, int b, register_t *c)
-{
-	if (__predict_false(ktrace_on))
-		ktr_sysret(a, b, c);
-}
-
-static __inline void
-ktrkuser(const char *a, const void *b, size_t c)
-{
-	if (__predict_false(ktrace_on))
-		ktr_kuser(a, b, c);
-}
-
-static __inline void
-ktrmib(const int *a , u_int b)
-{
-	if (__predict_false(ktrace_on))
-		ktr_mib(a, b);
-}
-
-static __inline void
-ktrexecarg(const void *a, size_t b)
-{
-	if (__predict_false(ktrace_on))
-		ktr_execarg(a, b);
-}
-
-static __inline void
-ktrexecenv(const void *a, size_t b)
-{
-	if (__predict_false(ktrace_on))
-		ktr_execenv(a, b);
-}
-
-static __inline void
-ktrexecfd(int fd, u_int dtype)
-{
-	if (__predict_false(ktrace_on))
-		ktr_execfd(fd, dtype);
-}
-
-struct ktrace_entry;
-int	ktealloc(struct ktrace_entry **, void **, lwp_t *, int, size_t);
-void	ktesethdrlen(struct ktrace_entry *, size_t);
-void	ktraddentry(lwp_t *, struct ktrace_entry *, int);
-/* Flags for ktraddentry (3rd arg) */
-#define	KTA_NOWAIT		0x0000
-#define	KTA_WAITOK		0x0001
-#define	KTA_LARGE		0x0002
+/* please keep these sorted by second argument to ktrstruct() */
+#define ktrabstimespec(p, s) \
+	ktrstruct(p, "abstimespec", s, sizeof(struct timespec))
+#define ktrabstimeval(p, s) \
+	ktrstruct(p, "abstimeval", s, sizeof(struct timeval))
+#define ktrcmsghdr(p, s, l) \
+	ktrstruct(p, "cmsghdr", s, l)
+#define ktrfds(p, s, c) \
+	ktrstruct(p, "fds", s, (c) * sizeof(int))
+#define ktrfdset(p, s, l) \
+	ktrstruct(p, "fdset", s, l)
+#define ktrflock(p, s) \
+	ktrstruct(p, "flock", s, sizeof(struct flock))
+#define ktriovec(p, s, c) \
+	ktrstruct(p, "iovec", s, (c) * sizeof(struct iovec))
+#define ktritimerval(p, s) \
+	ktrstruct(p, "itimerval", s, sizeof(struct itimerval))
+#define ktrevent(p, s, c) \
+	ktrstruct(p, "kevent", s, (c) * sizeof(struct kevent))
+#define ktrmmsghdr(p, s) \
+	ktrstruct(p, "mmsghdr", s, sizeof(struct mmsghdr))
+#define ktrmsghdr(p, s) \
+	ktrstruct(p, "msghdr", s, sizeof(struct msghdr))
+#define ktrpollfd(p, s, c) \
+	ktrstruct(p, "pollfd", s, (c) * sizeof(struct pollfd))
+#define ktrquota(p, s) \
+	ktrstruct(p, "quota", s, sizeof(struct dqblk))
+#define ktrreltimespec(p, s) \
+	ktrstruct(p, "reltimespec", s, sizeof(struct timespec))
+#define ktrreltimeval(p, s) \
+	ktrstruct(p, "reltimeval", s, sizeof(struct timeval))
+#define ktrrlimit(p, s) \
+	ktrstruct(p, "rlimit", s, sizeof(struct rlimit))
+#define ktrrusage(p, s) \
+	ktrstruct(p, "rusage", s, sizeof(struct rusage))
+#define ktrsigaction(p, s) \
+	ktrstruct(p, "sigaction", s, sizeof(struct sigaction))
+#define ktrsiginfo(p, s) \
+	ktrstruct(p, "siginfo", s, sizeof(siginfo_t))
+#define ktrsockaddr(p, s, l) \
+	ktrstruct(p, "sockaddr", s, l)
+#define ktrstat(p, s) \
+	ktrstruct(p, "stat", s, sizeof(struct stat))
 
 #endif	/* !_KERNEL */
-
-#endif /* _SYS_KTRACE_H_ */

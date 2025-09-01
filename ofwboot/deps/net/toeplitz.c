@@ -1,4 +1,4 @@
-/* $OpenBSD: toeplitz.c,v 1.9 2020/09/01 19:18:26 tb Exp $ */
+/* $OpenBSD: toeplitz.c,v 1.11 2025/07/07 02:28:50 jsg Exp $ */
 
 /*
  * Copyright (c) 2009 The DragonFly Project.  All rights reserved.
@@ -51,37 +51,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-/*-
- * Copyright (c) 2019 Ryo Shimizu
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS
- * OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
- * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
-
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/kernel.h>
-#include <sys/sysctl.h>
-#include <sys/cprng.h>
 
 #include <netinet/in.h>
 
@@ -97,7 +68,7 @@ const struct stoeplitz_cache *const
 				stoeplitz_cache = &stoeplitz_syskey_cache;
 
 /* parity of n16: count (mod 2) of ones in the binary representation. */
-static int
+int
 parity(uint16_t n16)
 {
 	n16 = ((n16 & 0xaaaa) >> 1) ^ (n16 & 0x5555);
@@ -112,12 +83,12 @@ parity(uint16_t n16)
  * The Toeplitz matrix obtained from a seed is invertible if and only if the
  * parity of the seed is 1. Generate such a seed uniformly at random.
  */
-static stoeplitz_key
+stoeplitz_key
 stoeplitz_random_seed(void)
 {
 	stoeplitz_key seed;
 
-	seed = cprng_strong32() & UINT16_MAX;
+	seed = arc4random() & UINT16_MAX;
 	if (parity(seed) == 0)
 		seed ^= 1;
 
@@ -191,7 +162,7 @@ stoeplitz_hash_ip6(const struct stoeplitz_cache *scache,
 	uint32_t n32 = 0;
 	size_t i;
 
-	for (i = 0; i < __arraycount(faddr6->s6_addr32); i++)
+	for (i = 0; i < nitems(faddr6->s6_addr32); i++)
 		n32 ^= faddr6->s6_addr32[i] ^ laddr6->s6_addr32[i];
 
 	return (stoeplitz_hash_n32(scache, n32));
@@ -205,7 +176,7 @@ stoeplitz_hash_ip6port(const struct stoeplitz_cache *scache,
 	uint32_t n32 = 0;
 	size_t i;
 
-	for (i = 0; i < __arraycount(faddr6->s6_addr32); i++)
+	for (i = 0; i < nitems(faddr6->s6_addr32); i++)
 		n32 ^= faddr6->s6_addr32[i] ^ laddr6->s6_addr32[i];
 
 	n32 ^= fport ^ lport;
@@ -213,6 +184,15 @@ stoeplitz_hash_ip6port(const struct stoeplitz_cache *scache,
 	return (stoeplitz_hash_n32(scache, n32));
 }
 #endif /* INET6 */
+
+uint16_t
+stoeplitz_hash_eaddr(const struct stoeplitz_cache *scache,
+    const uint8_t ea[static 6])
+{
+	const uint16_t *ea16 = (const uint16_t *)ea;
+
+	return (stoeplitz_hash_n16(scache, ea16[0] ^ ea16[1] ^ ea16[2]));
+}
 
 void
 stoeplitz_to_key(void *key, size_t klen)
@@ -227,88 +207,4 @@ stoeplitz_to_key(void *key, size_t klen)
 		k[i + 0] = skey >> 8;
 		k[i + 1] = skey;
 	}
-}
-
-/*
- * e.g.)
- *
- * struct in_addr src, dst;
- * uint16_t srcport, dstport;
- * toeplitz_vhash(rsskey[], sizeof(rsskey),
- *                    &src, sizeof(src),
- *                    &dst, sizeof(dst),
- *                    &srcport, sizeof(srcport),
- *                    &dstport, sizeof(dstport),
- *                    NULL);
- *
- * struct in6_addr src6, dst6;
- * toeplitz_vhash(rsskey[], sizeof(rsskey),
- *                    &src6, sizeof(src6),
- *                    &dst6, sizeof(dst6),
- *                    NULL);
- *
- * struct ip *ip;
- * struct tcphdr *tcp;
- * toeplitz_vhash(rsskey[], sizeof(rsskey),
- *                    &ip->ip_src, sizeof(ip->ip_src),
- *                    &ip->ip_dst, sizeof(ip->ip_dst),
- *                    &tcp->th_sport, sizeof(tcp->th_sport),
- *                    &tcp->th_dport, sizeof(tcp->th_dport),
- *                    NULL);
- *
- */
-uint32_t
-toeplitz_vhash(const uint8_t *keyp, size_t keylen, ...)
-{
-	va_list ap;
-	uint32_t hash, v;
-	size_t datalen;
-	uint8_t *datap, key, data;
-	const uint8_t *keyend;
-
-	keyend = keyp + keylen;
-
-	/* first 32bit is initial vector */
-	v = *keyp++;
-	v <<= 8;
-	v |= *keyp++;
-	v <<= 8;
-	v |= *keyp++;
-	v <<= 8;
-	v |= *keyp++;
-
-	hash = 0;
-	va_start(ap, keylen);
-
-	while ((datap = va_arg(ap, uint8_t *)) != NULL) {
-		for (datalen = va_arg(ap, size_t); datalen > 0; datalen--) {
-			/* fetch key and input data by 8bit */
-			if (keyp < keyend)
-				key = *keyp++;
-			else
-				key = 0;
-			data = *datap++;
-
-#define XOR_AND_FETCH_BIT(x)			\
-			if (data & __BIT(x))		\
-				hash ^= v;		\
-			v <<= 1;			\
-			if (key & __BIT(x))		\
-				v |= 1;
-
-			XOR_AND_FETCH_BIT(7);
-			XOR_AND_FETCH_BIT(6);
-			XOR_AND_FETCH_BIT(5);
-			XOR_AND_FETCH_BIT(4);
-			XOR_AND_FETCH_BIT(3);
-			XOR_AND_FETCH_BIT(2);
-			XOR_AND_FETCH_BIT(1);
-			XOR_AND_FETCH_BIT(0);
-
-#undef XOR_AND_FETCH_BIT
-		}
-	}
-	va_end(ap);
-
-	return hash;
 }

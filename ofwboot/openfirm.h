@@ -1,4 +1,5 @@
-/*	$NetBSD: openfirm.h,v 1.6 2017/09/15 13:25:34 martin Exp $	*/
+/*	$OpenBSD: openfirm.h,v 1.7 2018/06/26 19:43:27 kettenis Exp $	*/
+/*	$NetBSD: openfirm.h,v 1.1 2000/08/20 14:58:42 mrg Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996 Wolfgang Solfrank.
@@ -34,13 +35,8 @@
  * Prototypes for Openfirmware Interface Routines
  */
 
-#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <machine/openfirm.h>
-
-#ifndef PROM_MAX_PATH
-#define PROM_MAX_PATH	128
-#endif
 
 #if 0
 u_int OF_finddevice(char *name);
@@ -53,22 +49,14 @@ u_int OF_open(char *dname);
 void OF_close(u_int handle);
 int OF_write(u_int handle, void *addr, int len);
 int OF_read(u_int handle, void *addr, int len);
-int OF_seek(u_int handle, uint64_t pos);
+int OF_seek(u_int handle, u_int64_t pos);
 #endif
-void*	OF_claim(void *, u_int, u_int);
-void	OF_release(void *, u_int);
-int	OF_milliseconds(void);
-void	OF_chain(void *, u_int,
-	    void (*)(int, int, int (*)(void *), void *, u_int), void *, u_int);
-int	OF_peer(int);
-int	OF_child(int);
-vaddr_t	OF_claim_virt(vaddr_t, int);
-vaddr_t	OF_alloc_virt(int, int);
-int	OF_free_virt(vaddr_t, int);
-int	OF_unmap_virt(vaddr_t, int);
-vaddr_t	OF_map_phys(paddr_t, off_t, vaddr_t, int);
-paddr_t	OF_alloc_phys(int, int);
-paddr_t	OF_claim_phys(paddr_t, int);
-int	OF_free_phys(paddr_t, int);
-int	OF_interpret(const char *, int, int, ...);
-void	OF_initialize(void);
+void *OF_claim(void *virt, u_int size, u_int align);
+void OF_release(void *virt, u_int size);
+int OF_milliseconds(void);
+void OF_chain(void *addr, u_int size, void (*entry)(), void *parm, u_int parmlen);
+int OF_peer(int);
+int OF_child(int);
+int OF_parent(int);
+int OF_package_to_path(int, char *, int);
+

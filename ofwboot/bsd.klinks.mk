@@ -1,1 +1,0 @@
-deps/share/bsd.klinks.mk

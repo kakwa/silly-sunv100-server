@@ -1,35 +1,8 @@
-/*	$NetBSD: alloc.c,v 1.5 2011/05/19 03:09:47 christos Exp $	*/
-
-/*-
- * Copyright (c) 1997 The NetBSD Foundation, Inc.
- * All rights reserved.
- *
- * This code is derived from software contributed to The NetBSD Foundation
- * by Jason R. Thorpe.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
+/*	$OpenBSD: alloc.c,v 1.10 2024/11/05 14:49:52 miod Exp $	*/
+/*	$NetBSD: alloc.c,v 1.1 2000/08/20 14:58:37 mrg Exp $	*/
 
 /*
+ * Copyright (c) 1997 Jason R. Thorpe.  All rights reserved.
  * Copyright (c) 1997 Christopher G. Demetriou.  All rights reserved.
  * Copyright (c) 1996
  *	Matthias Drochner.  All rights reserved.
@@ -82,7 +55,6 @@
 #include <lib/libsa/stand.h>
 
 #include "openfirm.h"
-#include "boot.h"
 
 /*
  * Each block actually has ALIGN(struct ml) + ALIGN(size) bytes allocated
@@ -120,9 +92,9 @@ LIST_HEAD(, ml) allocatedlist = LIST_HEAD_INITIALIZER(allocatedlist);
 #define	OVERHEAD	ALIGN(sizeof (struct ml))	/* shorthand */
 
 void *
-alloc(size_t size)
+alloc(unsigned size)
 {
-	struct ml *f, *bestf;
+	struct ml *f, *bestf = NULL;
 #ifndef ALLOC_FIRST_FIT
 	unsigned bestsize = 0xffffffff;	/* greater than any real size */
 #endif
@@ -130,7 +102,7 @@ alloc(size_t size)
 	int failed;
 
 #ifdef ALLOC_TRACE
-	printf("alloc(%zu)", size);
+	printf("alloc(%u)", size);
 #endif
 
 	/*
@@ -141,18 +113,16 @@ alloc(size_t size)
 
 #ifdef ALLOC_FIRST_FIT
 	/* scan freelist */
-	for (f = freelist.lh_first; f != NULL && (size_t)f->size < size;
-	    f = f->list.le_next)
-		/* noop */ ;
+	LIST_FOREACH(f, &freelist, list)
+		if (f->size >= size)
+			break;
 	bestf = f;
 	failed = (bestf == NULL);
 #else
 	/* scan freelist */
-	bestf = NULL;		/* XXXGCC: -Wuninitialized */
-	f = freelist.lh_first;
-	while (f != NULL) {
-		if ((size_t)f->size >= size) {
-			if ((size_t)f->size == size)	/* exact match */
+	LIST_FOREACH(f, &freelist, list) {
+		if (f->size >= size) {
+			if (f->size == size)	/* exact match */
 				goto found;
 
 			if (f->size < bestsize) {
@@ -161,11 +131,10 @@ alloc(size_t size)
 				bestsize = f->size;
 			}
 		}
-		f = f->list.le_next;
 	}
 
 	/* no match in freelist if bestsize unchanged */
-	failed = (bestsize == 0xffffffff);
+	failed = (bestsize == 0xffffffff || bestsize >= size * 2);
 #endif
 
 	if (failed) {	/* nothing found */
@@ -173,13 +142,13 @@ alloc(size_t size)
 		 * Allocate memory from the OpenFirmware, rounded
 		 * to page size, and record the chunk size.
 		 */
-		size = roundup(size, NBPG);
-		help = OF_claim(NULL, (unsigned)size, NBPG);
+		size = roundup(size, PAGE_SIZE);
+		help = OF_claim(0, size, PAGE_SIZE);
 		if (help == (char *)-1)
 			panic("alloc: out of memory");
 
 		f = (struct ml *)help;
-		f->size = (unsigned)size;
+		f->size = size;
 #ifdef ALLOC_TRACE
 		printf("=%lx (new chunk size %u)\n",
 		    (u_long)(help + OVERHEAD), f->size);
@@ -206,40 +175,25 @@ alloc(size_t size)
 }
 
 void
-dealloc(void *ptr, size_t size)
+free(void *ptr, unsigned size)
 {
-	register struct ml *a = (struct ml *)((char*)ptr - OVERHEAD);
+	register struct ml *a;
+
+	if (ptr == NULL)
+		return;
+
+	a = (struct ml *)((char *)ptr - OVERHEAD);
 
 #ifdef ALLOC_TRACE
-	printf("dealloc(%lx, %zu) (origsize %u)\n", (u_long)ptr, size, a->size);
+	printf("free(%lx, %u) (origsize %u)\n", (u_long)ptr, size, a->size);
 #endif
 #ifdef DEBUG
-	if (size > (size_t)a->size)
-		printf("dealloc %zu bytes @%lx, should be <=%u\n",
+	if (size > a->size)
+		printf("free %u bytes @%lx, should be <=%u\n",
 		    size, (u_long)ptr, a->size);
 #endif
 
 	/* Remove from allocated list, place on freelist. */
 	LIST_REMOVE(a, list);
 	LIST_INSERT_HEAD(&freelist, a, list);
-}
-
-void
-freeall(void)
-{
-#ifdef __notyet__		/* Firmware bug ?! */
-	struct ml *m;
-
-	/* Release chunks on freelist... */
-	while ((m = freelist.lh_first) != NULL) {
-		LIST_REMOVE(m, list);
-		OF_release(m, m->size);
-	}
-
-	/* ...and allocated list. */
-	while ((m = allocatedlist.lh_first) != NULL) {
-		LIST_REMOVE(m, list);
-		OF_release(m, m->size);
-	}
-#endif /* __notyet__ */
 }

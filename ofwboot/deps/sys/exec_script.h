@@ -1,4 +1,5 @@
-/*	$NetBSD: exec_script.h,v 1.12 2005/12/11 12:25:20 christos Exp $	*/
+/*	$OpenBSD: exec_script.h,v 1.6 2018/02/07 20:31:57 tedu Exp $	*/
+/*	$NetBSD: exec_script.h,v 1.6 1995/03/26 20:24:11 jtc Exp $	*/
 
 /*
  * Copyright (c) 1994 Christopher G. Demetriou
@@ -30,20 +31,13 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _SYS_EXEC_SCRIPT_H_
-#define _SYS_EXEC_SCRIPT_H_
-
 #define	EXEC_SCRIPT_MAGIC	"#!"
 #define	EXEC_SCRIPT_MAGICLEN	2
-
-/* Extra 2 are for possible space between #! and shell name, and newline.  */
-#define SCRIPT_HDR_SIZE		(EXEC_SCRIPT_MAGICLEN + MAXINTERP + 2)
+#define EXEC_SCRIPT_HDRSZ	(EXEC_SCRIPT_MAGICLEN + 1 + MAXINTERP + 1)
 
 #ifdef _KERNEL
 
 /* the shell script handler's entry in the exec switch */
-int	exec_script_makecmds(struct lwp *, struct exec_package *);
+int	exec_script_makecmds(struct proc *, struct exec_package *);
 
 #endif /* _KERNEL */
-
-#endif /* !_SYS_EXEC_SCRIPT_H_ */

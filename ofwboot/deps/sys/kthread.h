@@ -1,12 +1,13 @@
-/*	$NetBSD: kthread.h,v 1.14 2020/08/01 02:04:55 riastradh Exp $	*/
+/*	$OpenBSD: kthread.h,v 1.7 2020/02/18 12:13:40 mpi Exp $	*/
+/*	$NetBSD: kthread.h,v 1.2 1998/11/14 00:08:49 thorpej Exp $	*/
 
 /*-
- * Copyright (c) 1998, 2007, 2009 The NetBSD Foundation, Inc.
+ * Copyright (c) 1998 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
  * by Jason R. Thorpe of the Numerical Aerospace Simulation Facility,
- * NASA Ames Research Center, and by Andrew Doran.
+ * NASA Ames Research Center.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,34 +34,17 @@
 #ifndef _SYS_KTHREAD_H_
 #define	_SYS_KTHREAD_H_
 
-#if !defined(_KERNEL)
-#error "not supposed to be exposed to userland"
-#endif
-
 /*
  * Kernel thread handling.
  */
 
-#include <sys/proc.h>
-
-#define	KTHREAD_IDLE		0x01	/* Do not run on creation */
-#define	KTHREAD_MPSAFE		0x02	/* Do not acquire kernel_lock */
-#define	KTHREAD_INTR		0x04	/* Software interrupt handler */
-#define	KTHREAD_TS		0x08	/* Time-sharing priority range */
-#define	KTHREAD_MUSTJOIN	0x10	/* Must join on exit */
-
-void	kthread_sysinit(void);
-
-int	kthread_create(pri_t, int, struct cpu_info *,
-    void (*)(void *), void *, lwp_t **, const char *, ...) __printflike(7, 8);
-void	kthread_exit(int) __dead;
-int	kthread_join(lwp_t *);
-
-int	kthread_fpu_enter(void);
-void	kthread_fpu_exit(int);
-
-/* Internal MD routines -- for use only by kthread_fpu_enter/exit.  */
-void	kthread_fpu_enter_md(void);
-void	kthread_fpu_exit_md(void);
+#ifdef _KERNEL
+struct proc;
+int	kthread_create(void (*)(void *), void *, struct proc **,
+	    const char *);
+void	kthread_create_deferred(void (*)(void *), void *);
+void	kthread_run_deferred_queue(void);
+void	kthread_exit(int) __attribute__((__noreturn__));
+#endif /* _KERNEL */
 
 #endif /* _SYS_KTHREAD_H_ */

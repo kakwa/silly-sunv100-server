@@ -1,5 +1,5 @@
-/*	$NetBSD: boot.c,v 1.35 2017/09/15 13:25:34 martin Exp $	*/
-
+/*	$OpenBSD: boot.c,v 1.44 2024/03/26 14:46:48 claudio Exp $	*/
+/*	$NetBSD: boot.c,v 1.3 2001/05/31 08:55:19 mrg Exp $	*/
 /*
  * Copyright (c) 1997, 1999 Eduardo E. Horvath.  All rights reserved.
  * Copyright (c) 1997 Jason R. Thorpe.  All rights reserved.
@@ -43,275 +43,131 @@
  *	[promdev[{:|,}partition]]/[filename] [flags]
  */
 
+#define ELFSIZE 64
+
 #include <lib/libsa/stand.h>
-#include <lib/libsa/bootcfg.h>
-#include <lib/libsa/loadfile.h>
-#include <lib/libkern/libkern.h>
+#include <lib/libkern/funcs.h>
 
 #include <sys/param.h>
+#include <sys/exec.h>
+#include <sys/exec_elf.h>
 #include <sys/reboot.h>
 #include <sys/disklabel.h>
-#include <sys/boot_flag.h>
 
 #include <machine/cpu.h>
-#include <machine/promlib.h>
-#include <machine/bootinfo.h>
-#include <sparc/stand/common/isfloppy.h>
+#include <lib/libsa/arc4.h>
 
-#include "boot.h"
+#ifdef SOFTRAID
+#include <sys/queue.h>
+#include <dev/biovar.h>
+#include <dev/softraidvar.h>
+#include <lib/libsa/softraid.h>
+
+#include "disk.h"
+#include "softraid_sparc64.h"
+#endif
+
 #include "ofdev.h"
 #include "openfirm.h"
 
+#ifdef BOOT_DEBUG
+uint32_t	boot_debug = 1
+		    /* | BOOT_D_OFDEV */
+		    /* | BOOT_D_OFNET */
+		;
+#endif
 
-#define COMPAT_BOOT(marks)	(marks[MARK_START] == marks[MARK_ENTRY])
-
-
-typedef void (*entry_t)(long o0, long bootargs, long bootsize, long o3,
-                        long ofw);
+#define	MEG	(1024*1024)
 
 /*
  * Boot device is derived from ROM provided information, or if there is none,
  * this list is used in sequence, to find a kernel.
  */
-const char *kernelnames[] = {
-	"netbsd",
-	"netbsd.gz",
-	"netbsd.old",
-	"netbsd.old.gz",
-	"onetbsd",
-	"onetbsd.gz",
-	"vmunix ",
-#ifdef notyet
-	"netbsd.pl ",
-	"netbsd.pl.gz ",
-	"netbsd.el ",
-	"netbsd.el.gz ",
-#endif
+char *kernels[] = {
+	"bsd",
 	NULL
 };
 
-char bootdev[PROM_MAX_PATH];
-bool root_fs_quickseekable = true;	/* unset for tftp boots */
-static bool bootinfo_pass_bootdev = false;
+char bootdev[128];
+extern char bootfile[128];
+int boothowto;
+int debug;
 
-int debug  = 0;
-int compatmode = 0;
-extern char twiddle_toggle;
+char rnddata[BOOTRANDOM_MAX];
+struct rc4_ctx randomctx;
 
-#if 0
-static void
-prom2boot(char *dev)
-{
-	char *cp, *lp = 0;
-	int handle;
-	char devtype[16];
-	
-	for (cp = dev; *cp; cp++)
-		if (*cp == ':')
-			lp = cp;
-	if (!lp)
-		lp = cp;
-	*lp = 0;
-}
-#endif
+int	elf64_exec(int, Elf64_Ehdr *, u_int64_t *, void **, void **);
+
+/*
+ *	parse:
+ *		[kernel-name] [-options]
+ *	leave kernel-name in passed-in string
+ *	put options into *howtop
+ *	return -1 iff syntax error (no - before options)
+ */
 
 static int
-bootoptions(const char *ap, char *loaddev, char *kernel, char *options)
+parseargs(char *str, int *howtop)
 {
-	int v = 0;
-	const char *start1 = NULL, *end1 = NULL, *start2 = NULL, *end2 = NULL;
-	const char *path;
-	char partition, *pp;
+	char *cp;
 
-	*kernel  = '\0';
-	*options = '\0';
-
-	if (ap == NULL) {
-		return (0);
+	*howtop = 0;
+	cp = str;
+	while (*cp == ' ')
+		++cp;
+	if (*cp != '-') {
+		while (*cp && *cp != ' ')
+			*str++ = *cp++;
+		while (*cp == ' ')
+			++cp;
+	}
+	/*
+	 * Note that, if only options have been passed, without a kernel
+	 * name, str == cp and options will be ignored at the boot blocks
+	 * level.
+	 * This a feature intended to make `boot -a' behave as intended.
+	 * If you want the bootblocks to handle arguments explicitly, a
+	 * kernel filename needs to be provided (as in `boot bsd -a').
+	 */
+	*str = 0;
+	switch (*cp) {
+	default:
+		printf("boot options string <%s> must start with -\n", cp);
+		return -1;
+	case 0:
+		return 0;
+	case '-':
+		break;
 	}
 
-	while (*ap == ' ') {
-		ap++;
-	}
-
-	if (*ap != '-') {
-		start1 = ap;
-		while (*ap != '\0' && *ap != ' ') {
-			ap++;
-		}
-		end1 = ap;
-
-		while (*ap == ' ') {
-			ap++;
-		}
-
-		if (*ap != '-') {
-			start2 = ap;
-			while (*ap != '\0' && *ap != ' ') {
-				ap++;
-			}
-			end2 = ap;
-			while (*ap != '\0' && *ap == ' ') {
-				ap++;
-			}
-		}
-	}
-	if (end2 == start2) {
-		start2 = end2 = NULL;
-	}
-	if (end1 == start1) {
-		start1 = end1 = NULL;
-	}
-
-	if (start1 == NULL) {
-		/* only options */
-	} else if (start2 == NULL) {
-		memcpy(kernel, start1, (end1 - start1));
-		kernel[end1 - start1] = '\0';
-		path = filename(kernel, &partition);
-		if (path == NULL) {
-			strcpy(loaddev, kernel);
-			kernel[0] = '\0';
-		} else if (path != kernel) {
-			/* copy device part */
-			memcpy(loaddev, kernel, path-kernel);
-			loaddev[path-kernel] = '\0';
-			if (partition) {
-				pp = loaddev + strlen(loaddev);
-				pp[0] = ':';
-				pp[1] = partition;
-				pp[2] = '\0';
-			}
-			/* and kernel path */
-			strcpy(kernel, path);
-		}
-	} else {
-		memcpy(loaddev, start1, (end1-start1));
-		loaddev[end1-start1] = '\0';
-		memcpy(kernel, start2, (end2 - start2));
-		kernel[end2 - start2] = '\0';
-	}
-
-	twiddle_toggle = 1;
-	strcpy(options, ap);
-	while (*ap != '\0' && *ap != ' ' && *ap != '\t' && *ap != '\n') {
-		BOOT_FLAG(*ap, v);
-		switch(*ap++) {
+	++cp;
+	while (*cp) {
+		switch (*cp++) {
+		case 'a':
+			*howtop |= RB_ASKNAME;
+			break;
+		case 'd':
+			if (!debug) debug = 1;
+			break;
 		case 'D':
 			debug = 2;
 			break;
-		case 'C':
-			compatmode = 1;
-			break;
-		case 'T':
-			twiddle_toggle = 1 - twiddle_toggle;
-			break;
-		default:
-			break;
 		}
 	}
-
-	if (((v & RB_KDB) != 0) && (debug == 0)) {
-		debug = 1;
-	}
-
-	DPRINTF(("bootoptions: device='%s', kernel='%s', options='%s'\n",
-	    loaddev, kernel, options));
-	return (v);
+	return 0;
 }
 
-/*
- * The older (those relying on ofwboot v1.8 and earlier) kernels can't handle
- * ksyms information unless it resides in a dedicated memory allocated from
- * PROM and aligned on NBPG boundary. This is because the kernels calculate
- * their ends on their own, they use address of 'end[]' reference which follows
- * text segment. Ok, allocate some memory from PROM and copy symbol information
- * over there.
- */
+
 static void
-ksyms_copyout(void **ssym, void **esym)
+chain(u_int64_t pentry, char *args, void *ssym, void *esym)
 {
-	uint8_t *addr;
-	int kssize = (int)(long)((char *)*esym - (char *)*ssym + 1);
-
-	DPRINTF(("ksyms_copyout(): ssym = %p, esym = %p, kssize = %d\n",
-				*ssym, *esym, kssize));
-
-	if ( (addr = OF_claim(0, kssize, NBPG)) == (void *)-1) {
-		panic("ksyms_copyout(): no space for symbol table");
-	}
-
-	memcpy(addr, *ssym, kssize);
-	*ssym = addr;
-	*esym = addr + kssize - 1;
-
-	DPRINTF(("ksyms_copyout(): ssym = %p, esym = %p\n", *ssym, *esym));
-}
-
-/*
- * Prepare boot information and jump directly to the kernel.
- */
-static void
-jump_to_kernel(u_long *marks, char *kernel, char *args, void *ofw,
-	int boothowto)
-{
+	extern char end[];
+	void (*entry)();
 	int l, machine_tag;
-	long newargs[4];
-	void *ssym, *esym;
-	vaddr_t bootinfo;
-	struct btinfo_symtab bi_sym;
-	struct btinfo_kernend bi_kend;
-	struct btinfo_boothowto bi_howto;
-	char *cp;
-	char bootline[PROM_MAX_PATH * 2];
+	long newargs[3];
 
-	/* Compose kernel boot line. */
-	strncpy(bootline, kernel, sizeof(bootline));
-	cp = bootline + strlen(bootline);
-	if (*args) {
-		*cp++ = ' ';
-		strncpy(bootline, args, sizeof(bootline) - (cp - bootline));
-	}
-	*cp = 0; args = bootline;
+	entry = (void *)(long)pentry;
 
-	/* Record symbol information in the bootinfo. */
-	bootinfo = bi_init(marks[MARK_END]);
-	bi_sym.nsym = marks[MARK_NSYM];
-	bi_sym.ssym = marks[MARK_SYM];
-	bi_sym.esym = marks[MARK_END];
-	bi_add(&bi_sym, BTINFO_SYMTAB, sizeof(bi_sym));
-	bi_kend.addr= bootinfo + BOOTINFO_SIZE;
-	bi_add(&bi_kend, BTINFO_KERNEND, sizeof(bi_kend));
-	bi_howto.boothowto = boothowto;
-	bi_add(&bi_howto, BTINFO_BOOTHOWTO, sizeof(bi_howto));
-	if (bootinfo_pass_bootunit)
-		bi_add(&bi_unit, BTINFO_BOOTDEV_UNIT,
-		    sizeof(bi_unit));
-	if (bootinfo_pass_bootdev) {
-		struct {
-			struct btinfo_common common;
-			char name[256];
-		} info;
-		
-		strcpy(info.name, bootdev);
-		bi_add(&info, BTINFO_BOOTDEV, strlen(bootdev)
-			+sizeof(struct btinfo_bootdev));
-	}
-
-	sparc64_finalize_tlb(marks[MARK_DATA]);
-	sparc64_bi_add();
-
-	ssym  = (void*)(long)marks[MARK_SYM];
-	esym  = (void*)(long)marks[MARK_END];
-
-	DPRINTF(("jump_to_kernel(): ssym = %p, esym = %p\n", ssym, esym));
-
-	/* Adjust ksyms pointers, if needed. */
-	if (COMPAT_BOOT(marks) || compatmode) {
-		ksyms_copyout(&ssym, &esym);
-	}
-
-	freeall();
 	/*
 	 * When we come in args consists of a pointer to the boot
 	 * string.  We need to fix it so it takes into account
@@ -323,196 +179,364 @@ jump_to_kernel(u_long *marks, char *kernel, char *args, void *ofw,
 	 * strings.
 	 */
 	l = strlen(args) + 1;
-	memcpy(args + l, &esym, sizeof(esym));
+	bcopy(&esym, args + l, sizeof(esym));
 	l += sizeof(esym);
 
 	/*
 	 * Tell the kernel we're an OpenFirmware system.
 	 */
+#define SPARC_MACHINE_OPENFIRMWARE		0x44444230
 	machine_tag = SPARC_MACHINE_OPENFIRMWARE;
-	memcpy(args + l, &machine_tag, sizeof(machine_tag));
+	bcopy(&machine_tag, args + l, sizeof(machine_tag));
 	l += sizeof(machine_tag);
 
-	/* 
+	/*
 	 * Since we don't need the boot string (we can get it from /chosen)
 	 * we won't pass it in.  Just pass in esym and magic #
 	 */
 	newargs[0] = SPARC_MACHINE_OPENFIRMWARE;
 	newargs[1] = (long)esym;
 	newargs[2] = (long)ssym;
-	newargs[3] = (long)(void*)bootinfo;
 	args = (char *)newargs;
 	l = sizeof(newargs);
 
+#ifdef DEBUG
+	printf("chain: calling OF_chain(%x, %x, %x, %x, %x)\n",
+	    (void *)RELOC, end - (char *)RELOC, entry, args, l);
+#endif
 	/* if -D is set then pause in the PROM. */
-	if (debug > 1) callrom();
-
-	/*
-	 * Jump directly to the kernel. Solaris kernel and Sun PROM
-	 * flash updates expect ROMP vector in %o0, so we do. Format
-	 * of other parameters and their order reflect OF_chain()
-	 * symantics since this is what older NetBSD kernels rely on.
-	 * (see sparc64/include/bootinfo.h for specification).
-	 */
-	DPRINTF(("jump_to_kernel(%lx, %lx, %lx, %lx, %lx) @ %p\n", (long)ofw,
-				(long)args, (long)l, (long)ofw, (long)ofw,
-				(void*)marks[MARK_ENTRY]));
-	(*(entry_t)marks[MARK_ENTRY])((long)ofw, (long)args, (long)l, (long)ofw,
-				      (long)ofw);
-	printf("Returned from kernel entry point!\n");
+	if (debug > 1) OF_enter();
+	OF_chain((void *)RELOC, ((end - (char *)RELOC)+PAGE_SIZE)%PAGE_SIZE,
+	    entry, args, l);
+	panic("chain");
 }
 
-static void
-start_kernel(char *kernel, char *bootline, void *ofw, int isfloppy,
-	int boothowto)
+int
+loadfile(int fd, char *args, int isupgrade)
 {
-	int fd;
-	u_long marks[MARK_MAX] = {0};
-	int flags = LOAD_ALL;
+	union {
+		Elf64_Ehdr elf64;
+	} hdr;
+	int rval;
+	u_int64_t entry = 0;
+	void *ssym;
+	void *esym;
 
-	if (isfloppy)
-		flags &= ~LOAD_BACKWARDS;
+	ssym = NULL;
+	esym = NULL;
 
-	/*
-	 * First, load headers using default allocator and check whether kernel
-	 * entry address matches kernel text load address. If yes, this is the
-	 * old kernel designed for ofwboot v1.8 and therefore it must be mapped
-	 * by PROM. Otherwise, map the kernel with 4MB permanent pages.
-	 */
-	loadfile_set_allocator(LOADFILE_NOP_ALLOCATOR);
-	if ( (fd = loadfile(kernel, marks, LOAD_HDR|COUNT_TEXT)) != -1) {
-		if (COMPAT_BOOT(marks) || compatmode) {
-			(void)printf("[c] ");
-			loadfile_set_allocator(LOADFILE_OFW_ALLOCATOR);
-		} else {
-			loadfile_set_allocator(LOADFILE_MMU_ALLOCATOR);
-		}
-		(void)printf("Loading %s: ", kernel);
+	/* Load the header. */
+#ifdef DEBUG
+	printf("loadfile: reading header\n");
+#endif
+	if ((rval = read(fd, &hdr, sizeof(hdr))) != sizeof(hdr)) {
+		if (rval == -1)
+			printf("read header: %s\n", strerror(errno));
+		else
+			printf("read header: short read (only %d of %d)\n",
+			    rval, sizeof(hdr));
+		rval = 1;
+		goto err;
+	}
 
-		if (fdloadfile(fd, marks, flags) != -1) {
-			close(fd);
-			jump_to_kernel(marks, kernel, bootline, ofw, boothowto);
+	/* Determine file type, load kernel. */
+	if (bcmp(hdr.elf64.e_ident, ELFMAG, SELFMAG) == 0 &&
+	    hdr.elf64.e_ident[EI_CLASS] == ELFCLASS64) {
+		printf("Booting %s\n", opened_name);
+		rval = elf64_exec(fd, &hdr.elf64, &entry, &ssym, &esym);
+	} else {
+		rval = 1;
+		printf("unknown executable format\n");
+	}
+
+	if (rval)
+		goto err;
+
+	printf(" start=0x%lx\n", (unsigned long)entry);
+
+	/* Prevent re-upgrade: chmod a-x bsd.upgrade */
+	if (isupgrade) {
+		struct stat st;
+
+		if (fstat(fd, &st) == 0) {
+			st.st_mode &= ~(S_IXUSR|S_IXGRP|S_IXOTH);
+			if (fchmod(fd, st.st_mode) == -1)
+				printf("fchmod a-x %s: failed\n", opened_name);
 		}
 	}
-	(void)printf("Failed to load '%s'.\n", kernel);
+	close(fd);
+
+#ifdef SOFTRAID
+	if (bootdev_dip)
+		OF_close(bootdev_dip->sr_handle);
+	sr_clear_keys();
+#endif
+	chain(entry, args, ssym, esym);
+	/* NOTREACHED */
+
+ err:
+	close(fd);
+	return (rval);
 }
 
-static void
-help(void)
+static int
+upgrade(void)
 {
-	printf( "enter a special command\n"
-		"  halt\n"
-		"  exit\n"
-		"    to return to OpenFirmware\n"
-		"  ?\n"
-		"  help\n"
-		"    to display this message\n"
-		"or a boot specification:\n"
-		"  [device] [kernel] [options]\n"
-		"\n"
-		"for example:\n"
-		"  disk:a netbsd -s\n");
+	struct stat sb;
+
+	if (stat("/bsd.upgrade", &sb) < 0)
+		return 0;
+	if ((sb.st_mode & S_IXUSR) == 0) {
+		printf("/bsd.upgrade is not u+x\n");
+		return 0;
+        }
+	return 1;
 }
 
-static void
-do_config_command(const char *cmd, char *arg)
+int
+loadrandom(char *path, char *buf, size_t buflen)
 {
-	DPRINTF(("do_config_command: %s\n", cmd));
-	if (strcmp(cmd, "bootpartition") == 0) {
-		char *c;
+	struct stat sb;
+	int fd, error = 0;
 
-		DPRINTF(("switching boot partition to %s from %s\n",
-		    arg, bootdev));
-		c = strrchr(bootdev, ':');
-		if (!c) return;
-		if (c[1] == 0) return;
-		if (strlen(arg) > strlen(c)) return;
-		strcpy(c, arg);
-		DPRINTF(("new boot device: %s\n", bootdev));
-		bootinfo_pass_bootdev = true;
+	fd = open(path, O_RDONLY);
+	if (fd == -1)
+		return -1;
+	if (fstat(fd, &sb) == -1) {
+		error = -1;
+		goto done;
 	}
+	if (read(fd, buf, buflen) != buflen) {
+		error = -1;
+		goto done;
+	}
+	if (sb.st_mode & S_ISTXT) {
+		printf("NOTE: random seed is being reused.\n");
+		error = -1;
+		goto done;
+	}
+	fchmod(fd, sb.st_mode | S_ISTXT);
+done:
+	close(fd);
+	return (error);
 }
 
-static void
-check_boot_config(void)
+#ifdef SOFTRAID
+/*
+ * Set bootdev_dip to the softraid boot volume, if specified.
+ * Otherwise default to the softraid volume on the boot device, if any.
+ */
+static int
+srbootdev(const char *bootline)
 {
-	if (!root_fs_quickseekable)
-		return;
+	struct sr_boot_volume *bv;
+	int unit;
 
-	perform_bootcfg(BOOTCFG_FILENAME, &do_config_command, 32768);
-}
+	bootdev_dip = NULL;
 
-void
-main(void *ofw)
-{
-	int boothowto, i = 0, isfloppy, kboothowto;
+	/*
+	 * Look for softraid disks in bootline.
+	 * E.g. 'sr0', 'sr0:bsd', or 'sr0a:/bsd'
+	 */
+	if (bootline[0] == 's' && bootline[1] == 'r' &&
+	    '0' <= bootline[2] && bootline[2] <= '9') {
+		unit = bootline[2] - '0';
 
-	char kernel[PROM_MAX_PATH];
-	char bootline[PROM_MAX_PATH];
-
-	/* Initialize OpenFirmware */
-	romp = ofw;
-	prom_init();
-
-	printf("\r>> %s, Revision %s\n", bootprog_name, bootprog_rev);
-
-	/* Figure boot arguments */
-	strncpy(bootdev, prom_getbootpath(), sizeof(bootdev) - 1);
-	kboothowto = boothowto =
-	    bootoptions(prom_getbootargs(), bootdev, kernel, bootline);
-	isfloppy = bootdev_isfloppy(bootdev);
-
-	for (;; *kernel = '\0') {
-		if (boothowto & RB_ASKNAME) {
-			char cmdline[PROM_MAX_PATH];
-
-			printf("Boot: ");
-			kgets(cmdline, sizeof(cmdline));
-
-			if (!strcmp(cmdline,"exit") ||
-			    !strcmp(cmdline,"halt")) {
-				prom_halt();
-			} else if (!strcmp(cmdline, "?") ||
-				   !strcmp(cmdline, "help")) {
-				help();
-				continue;
-			}
-
-			boothowto  = bootoptions(cmdline, bootdev, kernel,
-			    bootline);
-			boothowto |= RB_ASKNAME;
-			i = 0;
+		/* Create a fake diskinfo for this softraid volume. */
+		SLIST_FOREACH(bv, &sr_volumes, sbv_link)
+			if (bv->sbv_unit == unit)
+				break;
+		if (bv == NULL) {
+			printf("Unknown device: sr%d\n", unit);
+			return ENODEV;
 		}
-
-		if (*kernel == '\0') {
-			if (kernelnames[i] == NULL) {
-				boothowto |= RB_ASKNAME;
-				continue;
-			}
-			strncpy(kernel, kernelnames[i++], PROM_MAX_PATH);
-		} else if (i == 0) {
-			/*
-			 * Kernel name was passed via command line -- ask user
-			 * again if requested image fails to boot.
-			 */
-			boothowto |= RB_ASKNAME;
-		}
-
-		check_boot_config();
-		start_kernel(kernel, bootline, ofw, isfloppy, kboothowto);
+	} else {
+		struct sr_boot_chunk *bc;
 
 		/*
-		 * Try next name from kernel name list if not in askname mode,
-		 * enter askname on reaching list's end.
+		 * Check if the boot device is a member of any of the assembled
+		 * softraid volumes.
 		 */
-		if ((boothowto & RB_ASKNAME) == 0 && (kernelnames[i] != NULL)) {
-			printf(": trying %s...\n", kernelnames[i]);
-		} else {
-			printf("\n");
-			boothowto |= RB_ASKNAME;
+		SLIST_FOREACH(bv, &sr_volumes, sbv_link) {
+			if ((bv->sbv_flags & BIOC_SCBOOTABLE) == 0)
+				continue;
+
+			SLIST_FOREACH(bc, &bv->sbv_chunks, sbc_link) {
+				struct diskinfo *dip = bc->sbc_diskinfo;
+
+				if (!strcmp(dip->path, bootdev))
+					break;
+			}
+			if (bc != NULL)
+				break;
 		}
 	}
 
-	(void)printf("Boot failed! Exiting to the Firmware.\n");
-	prom_halt();
+	if (bv != NULL) {
+		if ((bv->sbv_flags & BIOC_SCBOOTABLE) == 0) {
+			printf("device sr%d is not bootable\n", unit);
+			return ENODEV;
+		}
+
+		if ((bv->sbv_level == 'C' || bv->sbv_level == 0x1C) &&
+		    bv->sbv_keys == NULL)
+			if (sr_crypto_unlock_volume(bv) != 0)
+				return EPERM;
+
+		if (bv->sbv_diskinfo == NULL) {
+			struct sr_boot_chunk *bc;
+			struct diskinfo *dip, *bc_dip;
+			int sr_handle;
+
+			/* All reads will come from the boot chunk. */
+			bc = sr_vol_boot_chunk(bv);
+			if (bc == NULL)
+				return ENXIO;
+			bc_dip = (struct diskinfo *)bc->sbc_diskinfo;
+			sr_handle = OF_open(bc_dip->path);
+			if (sr_handle == -1)
+				return EIO;
+
+			dip = alloc(sizeof(struct diskinfo));
+			bzero(dip, sizeof(*dip));
+			dip->sr_vol = bv;
+			dip->sr_handle = sr_handle;
+			bv->sbv_diskinfo = dip;
+		}
+
+		/* strategy() and devopen() will use bootdev_dip */
+		bootdev_dip = bv->sbv_diskinfo;
+
+		/* Attempt to read disklabel. */
+		bv->sbv_part = 'c';
+		if (sr_getdisklabel(bv, &bootdev_dip->disklabel)) {
+			OF_close(bootdev_dip->sr_handle);
+			free(bv->sbv_diskinfo, sizeof(struct diskinfo));
+			bv->sbv_diskinfo = NULL;
+			bootdev_dip = NULL;
+			return ERDLAB;
+		}
+	}
+
+	return 0;
+}
+#endif
+
+int
+main(void)
+{
+	extern char version[];
+	int chosen;
+	int isupgrade = 0;
+	char bootline[512];		/* Should check size? */
+	char *cp;
+	int fd;
+#ifdef SOFTRAID
+	int err;
+#endif
+	char **bootlp;
+	char *just_bootline[2];
+
+	printf(">> kakwa's OFW BOOT %s\n", version);
+
+	/*
+	 * Get the boot arguments from Openfirmware
+	 */
+	if ((chosen = OF_finddevice("/chosen")) == -1 ||
+	    OF_getprop(chosen, "bootpath", bootdev, sizeof bootdev) < 0 ||
+	    OF_getprop(chosen, "bootargs", bootline, sizeof bootline) < 0) {
+		printf("Invalid Openfirmware environment\n");
+	}
+
+#ifdef KAKWAOFWTEST
+    printf("\n* bootdev: %s\n", bootdev);
+    printf("* bootline: %s\n", bootline);
+    printf("\nthis is just a test OFW program\n", bootline);
+    printf(">> exiting\n", bootline);
+    exit();
+#endif
+
+#ifdef SOFTRAID
+	diskprobe();
+	srprobe();
+	err = srbootdev(bootline);
+	if (err) {
+		printf("Cannot boot from softraid: %s\n", strerror(err));
+		_rtt();
+	}
+#endif
+
+	/*
+	 * case 1:	boot net -a
+	 *			-> getln loop
+	 * case 2:	boot net kernel [options]
+	 *			-> boot kernel, getln loop
+	 * case 3:	boot net [options]
+	 *			-> iterate boot list, getln loop
+	 */
+
+	bootlp = kernels;
+	if (parseargs(bootline, &boothowto) == -1 ||
+	    (boothowto & RB_ASKNAME)) {
+		bootlp = 0;
+	} else if (*bootline) {
+		just_bootline[0] = bootline;
+		just_bootline[1] = 0;
+		bootlp = just_bootline;
+	} else if (upgrade()) {
+		just_bootline[0] = "/bsd.upgrade";
+		just_bootline[1] = 0;
+		isupgrade = 1;
+		bootlp = just_bootline;
+		printf("upgrade detected: switching to %s\n", *bootlp);
+	}
+	for (;;) {
+		if (bootlp) {
+			cp = *bootlp++;
+			if (!cp) {
+				printf("\n");
+				bootlp = 0;
+				kernels[0] = 0;	/* no more iteration */
+			} else if (cp != bootline) {
+				printf("Trying %s...\n", cp);
+				if (strlcpy(bootline, cp, sizeof bootline)
+				    >= sizeof bootline) {
+					printf("bootargs too long: %s\n",
+					    bootline);
+					_rtt();
+				}
+			}
+		}
+		if (!bootlp) {
+			printf("Boot: ");
+			getln(bootline, sizeof bootline);
+			if (parseargs(bootline, &boothowto) == -1)
+				continue;
+			if (!*bootline) {
+				bootlp = kernels;
+				continue;
+			}
+			if (strcmp(bootline, "exit") == 0 ||
+			    strcmp(bootline, "halt") == 0) {
+				_rtt();
+			}
+		}
+		if (loadrandom(BOOTRANDOM, rnddata, sizeof(rnddata)) == 0)
+			boothowto |= RB_GOODRANDOM;
+
+		rc4_keysetup(&randomctx, rnddata, sizeof rnddata);
+		rc4_skip(&randomctx, 1536);
+
+		if ((fd = open(bootline, O_RDONLY)) < 0) {
+			printf("open %s: %s\n", opened_name, strerror(errno));
+			continue;
+		}
+		/* XXX void, for now */
+#ifdef DEBUG
+		if (debug)
+			printf("main: Calling loadfile(fd, %s)\n", opened_name);
+#endif
+		(void)loadfile(fd, opened_name, isupgrade);
+	}
+	return 0;
 }

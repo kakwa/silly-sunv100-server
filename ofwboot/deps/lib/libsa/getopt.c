@@ -1,1 +1,0 @@
-../../common/lib/libc/stdlib/getopt.c

@@ -1,5 +1,5 @@
-/*	$NetBSD: ip_ecn.h,v 1.12 2008/11/12 12:36:28 ad Exp $	*/
-/*	$KAME: ip_ecn.h,v 1.6 2001/05/03 14:51:48 itojun Exp $	*/
+/*	$OpenBSD: ip_ecn.h,v 1.7 2018/11/14 23:55:04 dlg Exp $	*/
+/*	$KAME: ip_ecn.h,v 1.5 2000/03/27 04:58:38 sumikawa Exp $	*/
 
 /*
  * Copyright (C) 1999 WIDE Project.
@@ -30,30 +30,23 @@
  * SUCH DAMAGE.
  *
  */
+
+#ifndef _NETINET_IP_ECN_H_
+#define _NETINET_IP_ECN_H_
+
 /*
  * ECN consideration on tunnel ingress/egress operation.
  * http://www.aciri.org/floyd/papers/draft-ipsec-ecn-00.txt
  */
 
-#ifndef _NETINET_IP_ECN_H_
-#define _NETINET_IP_ECN_H_
+#define ECN_ALLOWED_IPSEC	2	/* ECN allowed */
+#define ECN_ALLOWED		1	/* ECN allowed */
+#define ECN_FORBIDDEN		0	/* ECN forbidden */
+#define ECN_NOCARE		(-1)	/* no consideration to ECN */
 
-#if (defined(__FreeBSD__) && __FreeBSD__ >= 3) || defined(__NetBSD__)
-#if defined(_KERNEL_OPT)
-#include "opt_inet.h"
-#endif
-#endif
-
-#define ECN_ALLOWED	1	/* ECN allowed */
-#define ECN_FORBIDDEN	0	/* ECN forbidden */
-#define ECN_NOCARE	(-1)	/* no consideration to ECN */
-
-#if defined(KERNEL) || defined(_KERNEL)
-extern void ip_ecn_ingress (int, u_int8_t *, const u_int8_t *);
-extern void ip_ecn_egress (int, const u_int8_t *, u_int8_t *);
-#ifdef INET6
-extern void ip6_ecn_ingress (int, u_int32_t *, const u_int32_t *);
-extern void ip6_ecn_egress (int, const u_int32_t *, u_int32_t *);
-#endif
-#endif
-#endif /* !_NETINET_IP_ECN_H_ */
+#if defined(_KERNEL)
+extern void ip_ecn_ingress(int, u_int8_t *, u_int8_t *);
+extern int ip_ecn_egress(int, u_int8_t *, u_int8_t *);
+void ip_tos_patch(struct ip *, uint8_t);
+#endif /* _KERNEL */
+#endif /* _NETINET_IP_ECN_H_ */

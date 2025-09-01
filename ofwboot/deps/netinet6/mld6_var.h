@@ -1,4 +1,4 @@
-/*	$NetBSD: mld6_var.h,v 1.10 2011/11/19 22:51:29 tls Exp $	*/
+/*	$OpenBSD: mld6_var.h,v 1.6 2008/04/18 06:42:20 djm Exp $	*/
 /*	$KAME: mld6_var.h,v 1.4 2000/03/25 07:23:54 sumikawa Exp $	*/
 
 /*
@@ -35,20 +35,19 @@
 
 #ifdef _KERNEL
 
-#define MLD_RANDOM_DELAY(X)	(cprng_fast32() % (X) + 1)
+#define MLD_RANDOM_DELAY(X)	(arc4random_uniform(X) + 1)
 
 /*
  * States for MLD stop-listening processing
  */
 #define MLD_OTHERLISTENER			0
 #define MLD_IREPORTEDLAST			1
-#define MLD_REPORTPENDING			2 /* implementation specific */
 
-/* denotes that the MLD max response delay field specifies time in milliseconds */
-#define MLD_TIMER_SCALE	1000
-
-void	mld_init(void);
-void	mld_input(struct mbuf *, int);
+void	mld6_init(void);
+void	mld6_input(struct mbuf *, int);
+void	mld6_start_listening(struct in6_multi *);
+void	mld6_stop_listening(struct in6_multi *);
+void	mld6_fasttimeo(void);
 #endif /* _KERNEL */
 
-#endif /* !_NETINET6_MLD6_VAR_H_ */
+#endif /* _NETINET6_MLD6_VAR_H_ */

@@ -1,4 +1,5 @@
-/*	$NetBSD: syslimits.h,v 1.29 2024/12/22 23:18:29 riastradh Exp $	*/
+/*	$OpenBSD: syslimits.h,v 1.16 2024/08/02 01:53:21 guenther Exp $	*/
+/*	$NetBSD: syslimits.h,v 1.12 1995/10/05 05:26:19 thorpej Exp $	*/
 
 /*
  * Copyright (c) 1988, 1993
@@ -31,34 +32,21 @@
  *	@(#)syslimits.h	8.1 (Berkeley) 6/2/93
  */
 
-#ifndef _SYS_SYSLIMITS_H_
-#define _SYS_SYSLIMITS_H_
+#include <sys/cdefs.h>
 
-#include <sys/featuretest.h>
-
-#if defined(_KERNEL_OPT)
-#include "opt_syslimits.h"
-#endif
-
-#if defined(_POSIX_C_SOURCE) || defined(_XOPEN_SOURCE) || \
-    defined(_NETBSD_SOURCE)
-#define	ARG_MAX		 (256 * 1024)	/* max bytes for an exec function */
-#ifndef CHILD_MAX
-#define	CHILD_MAX		  160	/* max simultaneous processes */
-#endif
-#define	GID_MAX		   2147483647U	/* max value for a gid_t (2^31-2) */
+#if __POSIX_VISIBLE || __XPG_VISIBLE || __BSD_VISIBLE
+#define	ARG_MAX		 (512 * 1024)	/* max bytes for an exec function */
+#define	CHILD_MAX		   80	/* max simultaneous processes */
 #define	LINK_MAX		32767	/* max file link count */
 #define	MAX_CANON		  255	/* max bytes in term canon input line */
 #define	MAX_INPUT		  255	/* max bytes in terminal input */
-#define	NAME_MAX		  511	/* max bytes in a file name, must be */
-					/* kept in sync with MAXNAMLEN */
+#define	NAME_MAX		  255	/* max bytes in a file name */
 #define	NGROUPS_MAX		   16	/* max supplemental group id's */
-#define	UID_MAX		   2147483647U	/* max value for a uid_t (2^31-2) */
-#ifndef OPEN_MAX
-#define	OPEN_MAX		  128	/* max open files per process */
-#endif
+#define	OPEN_MAX		   64	/* max open files per process */
 #define	PATH_MAX		 1024	/* max bytes in pathname */
 #define	PIPE_BUF		  512	/* max bytes for atomic pipe writes */
+#define	SYMLINK_MAX	     PATH_MAX	/* max bytes in a symbolic link */
+#define	SYMLOOP_MAX		   32	/* max symlinks per path (for loops) */
 
 #define	BC_BASE_MAX	      INT_MAX	/* max ibase/obase values in bc(1) */
 #define	BC_DIM_MAX		65535	/* max array elements in bc(1) */
@@ -67,31 +55,29 @@
 #define	COLL_WEIGHTS_MAX	    2	/* max weights for order keyword */
 #define	EXPR_NEST_MAX		   32	/* max expressions nested in expr(1) */
 #define	LINE_MAX		 2048	/* max bytes in an input line */
+#ifndef RE_DUP_MAX
 #define	RE_DUP_MAX		  255	/* max RE's in interval notation */
-
-/*
- * POSIX Realtime Extension (1003.1b-1993)
- */
-#if (_POSIX_C_SOURCE - 0) >= 199309L || defined(_NETBSD_SOURCE)
-#define	DELAYTIMER_MAX		   32	/* max timer_overrun() value */
+#define	SEM_VALUE_MAX	     UINT_MAX	/* max value of a sem_* semaphore */
 #endif
 
-/*
- * IEEE Std 1003.1c-95, adopted in X/Open CAE Specification Issue 5 Version 2
- */
-#if (_POSIX_C_SOURCE - 0) >= 199506L || (_XOPEN_SOURCE - 0) >= 500 || \
-    defined(_NETBSD_SOURCE)
-#define	LOGIN_NAME_MAX		   17	/* max login name length incl. NUL */
-#endif
-
-/*
- * X/Open CAE Specification Issue 5 Version 2
- */
-#if defined(_XOPEN_SOURCE) || defined(_NETBSD_SOURCE)
-#define	IOV_MAX			 1024	/* max # of iovec's for readv(2) etc. */
+#if __XPG_VISIBLE
+#define	IOV_MAX			 1024	/* max # of iov's (readv,sendmsg,etc) */
 #define	NZERO			   20	/* default "nice" */
-#endif /* _XOPEN_SOURCE || _NETBSD_SOURCE */
+#endif /* __XPG_VISIBLE */
 
-#endif /* !_ANSI_SOURCE */
+#endif /* __POSIX_VISIBLE || __XPG_VISIBLE || __BSD_VISIBLE */
 
-#endif /* !_SYS_SYSLIMITS_H_ */
+#if __XPG_VISIBLE >= 500 || __POSIX_VISIBLE >= 199506 || __BSD_VISIBLE
+#define TTY_NAME_MAX		260	/* max tty device name length w/ NUL */
+#define LOGIN_NAME_MAX          32	/* max login name length w/ NUL */
+#endif /* __XPG_VISIBLE >= 500 || __POSIX_VISIBLE >= 199506 || __BSD_VISIBLE */
+
+#if __POSIX_VISIBLE >= 200112
+#define HOST_NAME_MAX		255	/* max hostname length w/o NUL */
+#endif
+
+#if __POSIX_VISIBLE >= 202405
+#define	GETENTROPY_MAX		  256	/* max bytes from getentropy(2) */
+#endif
+
+#define _MAXCOMLEN		24	/* includes NUL */

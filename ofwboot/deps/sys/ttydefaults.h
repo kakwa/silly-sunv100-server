@@ -1,4 +1,5 @@
-/*	$NetBSD: ttydefaults.h,v 1.17 2021/11/20 14:52:22 christos Exp $	*/
+/*	$OpenBSD: ttydefaults.h,v 1.7 2019/03/12 11:01:25 nicm Exp $	*/
+/*	$NetBSD: ttydefaults.h,v 1.8 1996/04/09 20:55:45 cgd Exp $	*/
 
 /*-
  * Copyright (c) 1982, 1986, 1993
@@ -59,7 +60,7 @@
 #define	CEOL		((unsigned char)'\377')	/* XXX avoid _POSIX_VDISABLE */
 #define	CERASE		0177
 #define	CINTR		CTRL('c')
-#define	CSTATUS		CTRL('t')
+#define	CSTATUS		((unsigned char)'\377')	/* XXX avoid _POSIX_VDISABLE */
 #define	CKILL		CTRL('u')
 #define	CMIN		1
 #define	CQUIT		034		/* FS, ^\ */
@@ -84,32 +85,11 @@
 /*
  * #define TTYDEFCHARS to include an array of default control characters.
  */
-#ifdef _KERNEL
 #ifdef TTYDEFCHARS
-const cc_t ttydefchars[NCCS] = {
-	[VEOF] = CEOF,
-	[VEOL] = CEOL,
-	[VEOL2] = CEOL,
-	[VERASE] = CERASE,
-	[VWERASE] = CWERASE,
-	[VKILL] = CKILL,
-	[VREPRINT] = CREPRINT,
-	[7] = _POSIX_VDISABLE,	/* spare */
-	[VINTR] = CINTR,
-	[VQUIT] = CQUIT,
-	[VSUSP] = CSUSP,
-	[VDSUSP] = CDSUSP,
-	[VSTART] = CSTART,
-	[VSTOP] = CSTOP,
-	[VLNEXT] = CLNEXT,
-	[VDISCARD] = CDISCARD,
-	[VMIN] = CMIN,
-	[VTIME] = CTIME,
-	[VSTATUS] = CSTATUS,
-	[19] = _POSIX_VDISABLE,	/* spare */
+cc_t	ttydefchars[NCCS] = {
+	CEOF,	CEOL,	CEOL,	CERASE, CWERASE, CKILL, CREPRINT,
+	_POSIX_VDISABLE, CINTR,	CQUIT,	CSUSP,	CDSUSP,	CSTART,	CSTOP,	CLNEXT,
+	CDISCARD, CMIN,	CTIME,  CSTATUS, _POSIX_VDISABLE
 };
 #undef TTYDEFCHARS
-#else
-extern const cc_t ttydefchars[NCCS];
 #endif
-#endif /* _KERNEL */

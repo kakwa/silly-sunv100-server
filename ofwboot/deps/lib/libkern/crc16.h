@@ -1,3 +1,4 @@
+/*	$OpenBSD: crc16.h,v 1.1 2021/11/01 13:53:59 kettenis Exp $	*/
 /*	$NetBSD: crc16.h,v 1.3 2020/04/16 23:29:53 rin Exp $	*/
 
 /*-
@@ -29,8 +30,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: crc16.h,v 1.3 2020/04/16 23:29:53 rin Exp $");
+#include <sys/types.h>
 
 /* CRC table for standard ANSI CRC-16 with polynom 0x8005 */
 static const uint16_t crc16_lookup[] = {

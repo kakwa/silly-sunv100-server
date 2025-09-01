@@ -1,35 +1,5 @@
-/*	$NetBSD: tcp_timer.h,v 1.30 2019/08/06 15:48:18 riastradh Exp $	*/
-
-/*-
- * Copyright (c) 2001, 2005 The NetBSD Foundation, Inc.
- * All rights reserved.
- *
- * This code is derived from software contributed to The NetBSD Foundation
- * by Jason R. Thorpe of Wasabi Systems, Inc.
- * This code is derived from software contributed to The NetBSD Foundation
- * by Charles M. Hannum.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
+/*	$OpenBSD: tcp_timer.h,v 1.27 2025/06/08 17:06:19 bluhm Exp $	*/
+/*	$NetBSD: tcp_timer.h,v 1.6 1995/03/26 20:32:37 jtc Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1993
@@ -66,15 +36,15 @@
 #define _NETINET_TCP_TIMER_H_
 
 /*
- * Definitions of the TCP timers.  These timers are counted
- * down PR_SLOWHZ times a second.
+ * Definitions of the TCP timers.
  */
-#define	TCPT_NTIMERS	4
-
 #define	TCPT_REXMT	0		/* retransmit */
-#define	TCPT_PERSIST	1		/* retransmit persistance */
+#define	TCPT_PERSIST	1		/* retransmit persistence */
 #define	TCPT_KEEP	2		/* keep alive */
 #define	TCPT_2MSL	3		/* 2*msl quiet time timer */
+#define	TCPT_DELACK	4		/* delayed ack timeout */
+
+#define	TCPT_NTIMERS	5
 
 /*
  * The TCPT_REXMT timer is used to force retransmissions.
@@ -114,89 +84,85 @@
 
 /*
  * Time constants.
- * All TCPTV_* constants are in units of slow ticks (typically 500 ms).
  */
-#define	TCPTV_MSL	( 30*PR_SLOWHZ)		/* max seg lifetime (hah!) */
-#define	TCPTV_SRTTBASE	0			/* base roundtrip time;
-						   if 0, no idea yet */
-#define	TCPTV_SRTTDFLT	(  3*PR_SLOWHZ)		/* assumed RTT if no info */
+#define	TCPTV_MSL	TCP_TIME(30)	/* max seg lifetime (hah!) */
+#define	TCPTV_SRTTBASE	0		/* base roundtrip time;
+					   if 0, no idea yet */
+#define	TCPTV_SRTTDFLT	TCP_TIME(3)	/* assumed RTT if no info */
 
-#define	TCPTV_PERSMIN	(  5*PR_SLOWHZ)		/* retransmit persistance */
-#define	TCPTV_PERSMAX	( 60*PR_SLOWHZ)		/* maximum persist interval */
+#define	TCPTV_PERSMIN	TCP_TIME(5)	/* retransmit persistence */
+#define	TCPTV_PERSMAX	TCP_TIME(60)	/* maximum persist interval */
 
-#define	TCPTV_KEEP_INIT	( 75*PR_SLOWHZ)		/* initial connect keep alive */
-#define	TCPTV_KEEP_IDLE	(120*60*PR_SLOWHZ)	/* dflt time before probing */
-#define	TCPTV_KEEPINTVL	( 75*PR_SLOWHZ)		/* default probe interval */
-#define	TCPTV_KEEPCNT	8			/* max probes before drop */
+#define	TCPTV_KEEPINIT	TCP_TIME(75)	/* initial connect keep alive */
+#define	TCPTV_KEEPIDLE	TCP_TIME(120*60) /* dflt time before probing */
+#define	TCPTV_KEEPINTVL	TCP_TIME(75)	/* default probe interval */
+#define	TCPTV_KEEPCNT	8		/* max probes before drop */
 
-#define	TCPTV_MIN	(  1*PR_SLOWHZ)		/* minimum allowable value */
-#define	TCPTV_REXMTMAX	( 64*PR_SLOWHZ)		/* max allowable REXMT value */
+#define	TCPTV_MIN	TCP_TIME(1)	/* minimum allowable value */
+#define	TCPTV_REXMTMAX	TCP_TIME(64)	/* max allowable REXMT value */
 
-#define	TCP_LINGERTIME	120			/* linger at most 2 minutes */
+#define	TCP_LINGERTIME	120		/* linger at most 2 minutes */
 
-#define	TCP_MAXRXTSHIFT	12			/* maximum retransmits */
+#define	TCP_MAXRXTSHIFT	12		/* maximum retransmits */
 
-/* Acks are delayed for 1 second; constant is in fast ticks. */
-#define	TCP_DELACK_TICKS (hz / PR_FASTHZ)	/* time to delay ACK */
+#define	TCP_DELACK_MSECS 200		/* time to delay ACK */
 
 #ifdef	TCPTIMERS
-const char *tcptimers[] =
-    { "REXMT", "PERSIST", "KEEP", "2MSL" };
-#endif
+const char *tcptimers[TCPT_NTIMERS] =
+    { "REXMT", "PERSIST", "KEEP", "2MSL", "DELACK" };
+#endif /* TCPTIMERS */
 
 /*
  * Init, arm, disarm, and test TCP timers.
  */
 #define	TCP_TIMER_INIT(tp, timer)					\
-	callout_setfunc(&(tp)->t_timer[(timer)],			\
-	    tcp_timer_funcs[(timer)], (tp))
+	timeout_set_flags(&(tp)->t_timer[(timer)],			\
+	    tcp_timer_funcs[(timer)], (tp)->t_inpcb,			\
+	    KCLOCK_NONE, TIMEOUT_PROC | TIMEOUT_MPSAFE)
 
-/*
- * nticks is given in units of slow timeouts,
- * typically 500 ms (with PR_SLOWHZ at 2).
- */
-#define	TCP_TIMER_ARM(tp, timer, nticks)				\
-	callout_schedule(&(tp)->t_timer[(timer)],			\
-	    (nticks) * (hz / PR_SLOWHZ))
+#define	TCP_TIMER_ARM(tp, timer, msecs)					\
+do {									\
+	SET((tp)->t_flags, TF_TIMER << (timer));			\
+	if (timeout_add_msec(&(tp)->t_timer[(timer)], (msecs)))		\
+		in_pcbref((tp)->t_inpcb);				\
+} while (0)
 
 #define	TCP_TIMER_DISARM(tp, timer)					\
-	callout_stop(&(tp)->t_timer[(timer)])
+do {									\
+	CLR((tp)->t_flags, TF_TIMER << (timer));			\
+	if (timeout_del(&(tp)->t_timer[(timer)]))			\
+		in_pcbunref((tp)->t_inpcb);				\
+} while (0)
 
 #define	TCP_TIMER_ISARMED(tp, timer)					\
-	callout_active(&(tp)->t_timer[(timer)])
-
-#define	TCP_TIMER_MAXTICKS						      \
-	(INT_MAX / (hz / PR_SLOWHZ))
-
-#define	TCP_MAXMSL							      \
-	(TCP_TIMER_MAXTICKS / 2)
+	ISSET((tp)->t_flags, TF_TIMER << (timer))
 
 /*
  * Force a time value to be in a certain range.
  */
-#define	TCPT_RANGESET(tv, value, tvmin, tvmax) { \
-	(tv) = (value); \
-	if ((tv) < (tvmin)) \
-		(tv) = (tvmin); \
-	if ((tv) > (tvmax)) \
-		(tv) = (tvmax); \
-}
+#define	TCPT_RANGESET(tv, value, tvmin, tvmax)				\
+do {									\
+	(tv) = (value);							\
+	if ((tv) < (tvmin))						\
+		(tv) = (tvmin);						\
+	else if ((tv) > (tvmax))					\
+		(tv) = (tvmax);						\
+} while (/* CONSTCOND */ 0)
 
 #ifdef _KERNEL
 typedef void (*tcp_timer_func_t)(void *);
 
 extern const tcp_timer_func_t tcp_timer_funcs[TCPT_NTIMERS];
 
-extern u_int tcp_keepinit;		/* time before initial connection times out */
-extern u_int tcp_keepidle;		/* time before keepalive probes begin */
-extern u_int tcp_keepintvl;		/* time between keepalive probes */
-extern u_int tcp_keepcnt;		/* number of keepalives, 0=infty */
-extern int tcp_maxpersistidle;		/* max idle time in persist */
-extern int tcp_ttl;			/* time to live for TCP segs */
+extern int tcp_delack_msecs;	/* [I] delayed ACK timeout in millisecs */
+extern int tcp_always_keepalive;/* [a] assume SO_KEEPALIVE always set */
+extern int tcp_keepinit;	/* [a] time to keep alive initial SYN packet */
+extern int tcp_keepidle;	/* [a] time before keepalive probes begin */
+extern int tcp_keepintvl;	/* [a] time between keepalive probes */
+extern int tcp_keepinit_sec;	/* [a] copy of above in seconds for sysctl */
+extern int tcp_keepidle_sec;	/* [a] copy of above in seconds for sysctl */
+extern int tcp_keepintvl_sec;	/* [a] copy of above in seconds for sysctl */
+extern int tcp_ttl;		/* time to live for TCP segs */
 extern const int tcp_backoff[];
-
-void	tcp_timer_init(void);
-void	tcp_slowtimo_init(void);
-#endif
-
-#endif /* !_NETINET_TCP_TIMER_H_ */
+#endif /* _KERNEL */
+#endif /* _NETINET_TCP_TIMER_H_ */

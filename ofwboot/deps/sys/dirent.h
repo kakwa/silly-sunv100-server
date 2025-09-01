@@ -1,4 +1,5 @@
-/*	$NetBSD: dirent.h,v 1.30 2016/01/22 23:31:30 dholland Exp $	*/
+/*	$OpenBSD: dirent.h,v 1.11 2013/12/13 18:09:27 zhuk Exp $	*/
+/*	$NetBSD: dirent.h,v 1.12 1996/04/09 20:55:25 cgd Exp $	*/
 
 /*-
  * Copyright (c) 1989, 1993
@@ -35,7 +36,6 @@
 #define _SYS_DIRENT_H_
 
 #include <sys/cdefs.h>
-#include <sys/featuretest.h>
 
 /*
  * The dirent structure defines the format of directory entries returned by
@@ -43,24 +43,27 @@
  *
  * A directory entry has a struct dirent at the front of it, containing its
  * inode number, the length of the entry, and the length of the name
- * contained in the entry.  These are followed by the name padded to 
- * _DIRENT_ALIGN() byte boundary with null bytes.  All names are guaranteed
- * NUL terminated.  The maximum length of a name in a directory is MAXNAMLEN.
+ * contained in the entry.  These are followed by the name padded to a 4
+ * byte boundary with null bytes.  All names are guaranteed null terminated.
+ * The maximum length of a name in a directory is MAXNAMLEN.
  */
+
 struct dirent {
-	ino_t d_fileno;			/* file number of entry */
-	uint16_t d_reclen;		/* length of this record */
-	uint16_t d_namlen;		/* length of string in d_name */
-	uint8_t  d_type; 		/* file type, see below */
-#if defined(_NETBSD_SOURCE)
-#define	MAXNAMLEN	511		/* must be kept in sync with NAME_MAX */
+	__ino_t    d_fileno;		/* file number of entry */
+	__off_t    d_off;		/* offset after this entry */
+	__uint16_t d_reclen;		/* length of this record */
+	__uint8_t  d_type; 		/* file type, see below */
+	__uint8_t  d_namlen;		/* length of string in d_name */
+	__uint8_t  __d_padding[4];	/* suppress padding after d_name */
+#if __BSD_VISIBLE
+#define	MAXNAMLEN	255
 	char	d_name[MAXNAMLEN + 1];	/* name must be no longer than this */
 #else
-	char	d_name[511 + 1];	/* name must be no longer than this */
+	char	d_name[255 + 1];	/* name must be no longer than this */
 #endif
 };
 
-#if defined(_NETBSD_SOURCE)
+#if __BSD_VISIBLE
 /*
  * File types
  */
@@ -72,59 +75,26 @@ struct dirent {
 #define	DT_REG		 8
 #define	DT_LNK		10
 #define	DT_SOCK		12
-#define	DT_WHT		14
-
-/*
- * Caution: the following macros are used by the ufs/ffs code on ffs's
- * struct direct as well as the exposed struct dirent. The two
- * structures are not the same, so it's important (until ufs is fixed,
- * XXX) that the macro definitions remain type-polymorphic.
- */
-
-/*
- * The _DIRENT_ALIGN macro returns the alignment of struct dirent.
- * struct direct and struct dirent12 used 4 byte alignment but
- * struct dirent uses 8.
- */
-#define _DIRENT_ALIGN(dp) (sizeof((dp)->d_fileno) - 1)
-/*
- * The _DIRENT_NAMEOFF macro returns the offset of the d_name field in 
- * struct dirent
- */
-#if __GNUC_PREREQ__(4, 0)
-#define	_DIRENT_NAMEOFF(dp)	__builtin_offsetof(__typeof__(*(dp)), d_name)
-#else
-#define _DIRENT_NAMEOFF(dp) \
-    ((char *)(void *)&(dp)->d_name - (char *)(void *)dp)
-#endif
-/*
- * The _DIRENT_RECLEN macro gives the minimum record length which will hold
- * a name of size "namlen".  This requires the amount of space in struct dirent
- * without the d_name field, plus enough space for the name with a terminating
- * null byte (namlen+1), rounded up to a the appropriate byte boundary.
- */
-#define _DIRENT_RECLEN(dp, namlen) \
-    ((_DIRENT_NAMEOFF(dp) + (namlen) + 1 + _DIRENT_ALIGN(dp)) & \
-    ~_DIRENT_ALIGN(dp))
-/*
- * The _DIRENT_SIZE macro returns the minimum record length required for
- * name name stored in the current record.
- */
-#define	_DIRENT_SIZE(dp) _DIRENT_RECLEN(dp, (dp)->d_namlen)
-/*
- * The _DIRENT_NEXT macro advances to the next dirent record.
- */
-#define _DIRENT_NEXT(dp) ((void *)((char *)(void *)(dp) + (dp)->d_reclen))
-/*
- * The _DIRENT_MINSIZE returns the size of an empty (invalid) record.
- */
-#define _DIRENT_MINSIZE(dp) _DIRENT_RECLEN(dp, 0)
 
 /*
  * Convert between stat structure types and directory types.
  */
 #define	IFTODT(mode)	(((mode) & 0170000) >> 12)
 #define	DTTOIF(dirtype)	((dirtype) << 12)
+
+#ifdef _KERNEL
+/*
+ * The DIRENT_RECSIZE macro gives the minimum record length which will hold
+ * a directory entry with a name of the given length, including the terminating
+ * nul byte, rounded up to proper alignment.
+ * The DIRENT_SIZE macro does the same when given a pointer to a struct dirent
+ */
+#define DIRENT_RECSIZE(namelen) \
+    ((offsetof(struct dirent, d_name) + (namelen) + 1 + 7) &~ 7)
+#define	DIRENT_SIZE(dp) \
+    DIRENT_RECSIZE((dp)->d_namlen)
 #endif
 
-#endif	/* !_SYS_DIRENT_H_ */
+#endif /* __BSD_VISIBLE */
+
+#endif /* _SYS_DIRENT_H_ */

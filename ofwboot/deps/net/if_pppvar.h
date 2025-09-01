@@ -1,6 +1,5 @@
-/*	$NetBSD: if_pppvar.h,v 1.28 2016/04/28 00:16:56 ozaki-r Exp $	*/
-/*	Id: if_pppvar.h,v 1.3 1996/07/01 01:04:37 paulus Exp	 */
-
+/*	$OpenBSD: if_pppvar.h,v 1.21 2024/02/28 16:08:34 denis Exp $	*/
+/*	$NetBSD: if_pppvar.h,v 1.5 1997/01/03 07:23:29 mikel Exp $	*/
 /*
  * if_pppvar.h - private structures and declarations for PPP.
  *
@@ -77,36 +76,43 @@
 #ifndef _NET_IF_PPPVAR_H_
 #define _NET_IF_PPPVAR_H_
 
-#include <sys/callout.h>
-
 /*
  * Supported network protocols.  These values are used for
  * indexing sc_npmode.
  */
 #define NP_IP	0		/* Internet Protocol */
-#define NP_IPV6	1		/* Internet Protocol version 6 */
+#define NP_IPV6	1		/* Internet Protocol v6 */
 #define NUM_NP	2		/* Number of NPs. */
+
+struct ppp_pkt;
+
+struct ppp_pkt_list {
+	struct mutex	 pl_mtx;
+	struct ppp_pkt	*pl_head;
+	struct ppp_pkt	*pl_tail;
+	u_int		 pl_count;
+	u_int		 pl_limit;
+};
 
 /*
  * Structure describing each ppp unit.
  */
 struct ppp_softc {
 	struct	ifnet sc_if;		/* network-visible interface */
+	struct	timeout sc_timo;	/* timeout control (for ptys) */
 	int	sc_unit;		/* XXX unit number */
 	u_int	sc_flags;		/* control/status bits; see if_ppp.h */
 	void	*sc_devp;		/* pointer to device-dep structure */
-	void	(*sc_start)(struct ppp_softc *);	/* start output proc */
+	void	(*sc_start)(struct ppp_softc *); /* start output proc */
 	void	(*sc_ctlp)(struct ppp_softc *); /* rcvd control pkt */
 	void	(*sc_relinq)(struct ppp_softc *); /* relinquish ifunit */
-	struct	callout sc_timo_ch;	/* timeout callout */
-	uint16_t sc_mru;		/* max receive unit */
+	u_int16_t sc_mru;		/* max receive unit */
 	pid_t	sc_xfer;		/* used in transferring unit */
-	struct	ifqueue sc_rawq;	/* received packets */
-	struct	ifqueue sc_inq;		/* queue of input packets for daemon */
+	struct	ppp_pkt_list sc_rawq;	/* received packets */
+	struct	mbuf_queue sc_inq;	/* queue of input packets for daemon */
 	struct	ifqueue sc_fastq;	/* interactive output packet q */
 	struct	mbuf *sc_togo;		/* output packet ready to go */
-	struct	mbuf *sc_npqueue;	/* output packets not to be sent yet */
-	struct	mbuf **sc_npqtail;	/* ptr to last next ptr in npqueue */
+	struct	mbuf_list sc_npqueue;	/* output packets not to be sent yet */
 	struct	pppstat sc_stats;	/* count of bytes/pkts sent/rcvd */
 	enum	NPmode sc_npmode[NUM_NP]; /* what to do with each NP */
 	struct	compressor *sc_xcomp;	/* transmit compressor */
@@ -115,51 +121,58 @@ struct ppp_softc {
 	void	*sc_rc_state;		/* receive decompressor state */
 	time_t	sc_last_sent;		/* time (secs) last NP pkt sent */
 	time_t	sc_last_recv;		/* time (secs) last NP pkt rcvd */
-	void	*sc_si;			/* software interrupt handle */
-#ifdef PPP_FILTER
-	/* Filter for packets to pass. */
-	struct	bpf_program sc_pass_filt_in;
-	struct	bpf_program sc_pass_filt_out;
-
-	/* Filter for "non-idle" packets. */
-	struct	bpf_program sc_active_filt_in;
-	struct	bpf_program sc_active_filt_out;
-#endif /* PPP_FILTER */
+	struct	bpf_program sc_pass_filt; /* filter for packets to pass */
+	struct	bpf_program sc_active_filt; /* filter for "non-idle" packets */
 #ifdef	VJC
-	struct	slcompress *sc_comp; 	/* vjc control buffer */
+	struct	slcompress *sc_comp;	/* vjc control buffer */
 #endif
 
 	/* Device-dependent part for async lines. */
 	ext_accm sc_asyncmap;		/* async control character map */
-	uint32_t sc_rasyncmap;		/* receive async control char map */
+	u_int32_t sc_rasyncmap;		/* receive async control char map */
 	struct	mbuf *sc_outm;		/* mbuf chain currently being output */
-	struct	mbuf *sc_m;		/* pointer to input mbuf chain */
-	struct	mbuf *sc_mc;		/* pointer to current input mbuf */
-	char	*sc_mp;			/* ptr to next char in input mbuf */
-	uint16_t sc_ilen;		/* length of input packet so far */
-	uint16_t sc_fcs;		/* FCS so far (input) */
-	uint16_t sc_outfcs;		/* FCS so far for output packet */
-	uint16_t sc_maxfastq;		/* Maximum number of packets that
-					 * can be received back-to-back in
-					 * the high priority queue */
-	uint8_t sc_nfastq;		/* Number of packets received
-					 * back-to-back in the high priority
-					 * queue */
-	u_char sc_rawin_start;		/* current char start */
-	struct ppp_rawin sc_rawin;	/* chars as received */
-	LIST_ENTRY(ppp_softc) sc_iflist;
+	struct	ppp_pkt *sc_pkt;	/* pointer to input pkt chain */
+	struct	ppp_pkt *sc_pktc;	/* pointer to current input pkt */
+	uint8_t	*sc_pktp;		/* ptr to next char in input pkt */
+	u_int16_t sc_ilen;		/* length of input packet so far */
+	u_int16_t sc_fcs;		/* FCS so far (input) */
+	u_int16_t sc_outfcs;		/* FCS so far for output packet */
+	u_char	sc_rawin[16];		/* chars as received */
+	int	sc_rawin_count;		/* # in sc_rawin */
+	LIST_ENTRY(ppp_softc) sc_list;	/* all ppp interfaces */
 };
 
 #ifdef _KERNEL
 
-struct	ppp_softc *pppalloc(pid_t);
-void	pppdealloc(struct ppp_softc *);
-int	pppioctl(struct ppp_softc *, u_long, void *, int, struct lwp *);
-void	ppp_restart(struct ppp_softc *);
-void	ppppktin(struct ppp_softc *, struct mbuf *, int);
-struct	mbuf *ppp_dequeue(struct ppp_softc *);
-int	pppoutput(struct ifnet *, struct mbuf *, const struct sockaddr *,
-	    const struct rtentry *);
-#endif /* _KERNEL */
+struct ppp_pkt_hdr {
+	struct ppp_pkt		*ph_next; /* next in pkt chain */
+	struct ppp_pkt		*ph_pkt;  /* prev in chain or next in list */
+	uint16_t		ph_len;
+	uint16_t		ph_errmark;
+};
 
-#endif /* !_NET_IF_PPPVAR_H_ */
+struct ppp_pkt {
+	struct ppp_pkt_hdr	p_hdr;
+	uint8_t			p_buf[MCLBYTES - sizeof(struct ppp_pkt_hdr)];
+};
+
+void	ppp_pkt_free(struct ppp_pkt *);
+
+#define PKT_NEXT(_p)		((_p)->p_hdr.ph_next)
+#define PKT_PREV(_p)		((_p)->p_hdr.ph_pkt)
+#define PKT_NEXTPKT(_p)		((_p)->p_hdr.ph_pkt)
+#define PKT_LEN(_p)		((_p)->p_hdr.ph_len)
+
+extern	struct ppp_softc ppp_softc[];
+
+struct	ppp_softc *pppalloc(pid_t pid);
+void	pppdealloc(struct ppp_softc *sc);
+int	pppioctl(struct ppp_softc *sc, u_long cmd, caddr_t data,
+		      int flag, struct proc *p);
+void	ppppktin(struct ppp_softc *sc, struct ppp_pkt *pkt, int lost);
+struct	mbuf *ppp_dequeue(struct ppp_softc *sc);
+void	ppp_restart(struct ppp_softc *sc);
+int	pppoutput(struct ifnet *, struct mbuf *,
+		       struct sockaddr *, struct rtentry *);
+#endif /* _KERNEL */
+#endif /* _NET_IF_PPPVAR_H_ */

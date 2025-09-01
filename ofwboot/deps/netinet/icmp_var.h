@@ -1,4 +1,5 @@
-/*	$NetBSD: icmp_var.h,v 1.32 2022/08/29 09:14:02 knakahara Exp $	*/
+/*	$OpenBSD: icmp_var.h,v 1.16 2020/08/22 17:55:54 gnezdo Exp $	*/
+/*	$NetBSD: icmp_var.h,v 1.8 1995/03/26 20:32:19 jtc Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1993
@@ -38,46 +39,73 @@
  * Variables related to this implementation
  * of the internet control message protocol.
  */
-
-/*
- * ICMP stastistics.
- * Each counter is an unsigned 64-bit value.
- */
-#define	ICMP_STAT_ERROR		0	/* # of calls to icmp_error */
-#define	ICMP_STAT_OLDSHORT	1	/* no error (old ip too short) */
-#define	ICMP_STAT_OLDICMP	2	/* no error (old was icmp) */
-#define	ICMP_STAT_BADCODE	3	/* icmp_code out of range */
-#define	ICMP_STAT_TOOSHORT	4	/* packet < ICMP_MINLEN */
-#define	ICMP_STAT_CHECKSUM	5	/* bad checksum */
-#define	ICMP_STAT_BADLEN	6	/* calculated bound mismatch */
-#define	ICMP_STAT_REFLECT	7	/* number of responses */
-#define	ICMP_STAT_PMTUCHG	8	/* path MTU changes */
-#define	ICMP_STAT_BMCASTECHO	9	/* b/mcast echo requests dropped */
-#define	ICMP_STAT_BMCASTTSTAMP	10	/* b/mcast tstamp requests dropped */
-#define	ICMP_STAT_LAST		16	/* Allow for 5 spare ones */
-#define	ICMP_STAT_OUTHIST	ICMP_STAT_LAST
-#define	ICMP_STAT_INHIST	(ICMP_STAT_LAST + ICMP_NTYPES)
-#define	ICMP_NSTATS		(ICMP_STAT_LAST + 2 * ICMP_NTYPES)
+struct	icmpstat {
+/* statistics related to icmp packets generated */
+	u_long	icps_error;		/* # of calls to icmp_error */
+	u_long	icps_toofreq;		/* no error because rate limiter */
+	u_long	icps_oldshort;		/* no error because old ip too short */
+	u_long	icps_oldicmp;		/* no error because old was icmp */
+	u_long	icps_outhist[ICMP_MAXTYPE + 1];
+/* statistics related to input messages processed */
+	u_long	icps_badcode;		/* icmp_code out of range */
+	u_long	icps_tooshort;		/* packet < ICMP_MINLEN */
+	u_long	icps_checksum;		/* bad checksum */
+	u_long	icps_badlen;		/* calculated bound mismatch */
+	u_long	icps_reflect;		/* number of responses */
+	u_long	icps_bmcastecho;	/* rejected broadcast icmps */
+	u_long	icps_inhist[ICMP_MAXTYPE + 1];
+};
 
 /*
  * Names for ICMP sysctl objects
  */
 #define	ICMPCTL_MASKREPL	1	/* allow replies to netmask requests */
-#if 0	/*obsoleted*/
-#define ICMPCTL_ERRRATELIMIT	2	/* error rate limit */
-#endif
-#define ICMPCTL_RETURNDATABYTES	3	/* # of bytes to include in errors */
-#define ICMPCTL_ERRPPSLIMIT	4	/* ICMP error pps limitation */
-#define ICMPCTL_REDIRACCEPT	5	/* Accept redirects from routers */
-#define ICMPCTL_REDIRTIMEOUT	6	/* Remove routes added via redirects */
-#define	ICMPCTL_STATS		7	/* ICMP statistics */
-#define ICMPCTL_BMCASTECHO	8	/* allow broad/mult-cast echo */
-#define ICMPCTL_DYNAMIC_RT_MSG	9	/* send routing message for RTM_DYNAMIC */
+#define ICMPCTL_BMCASTECHO	2	/* reply to icmps to broadcast/mcast */
+#define ICMPCTL_ERRPPSLIMIT	3	/* ICMP error pps limitation */
+#define	ICMPCTL_REDIRACCEPT	4	/* Accept redirects from routers */
+#define	ICMPCTL_REDIRTIMEOUT	5	/* Remove routes added via redirects */
+#define	ICMPCTL_TSTAMPREPL	6	/* allow replies to timestamp requests */
+#define ICMPCTL_STATS		7	/* ICMP statistics */
+#define ICMPCTL_MAXID		8
+
+#define ICMPCTL_NAMES { \
+	{ 0, 0 }, \
+	{ "maskrepl", CTLTYPE_INT }, \
+	{ "bmcastecho", CTLTYPE_INT }, \
+	{ "errppslimit", CTLTYPE_INT }, \
+	{ "rediraccept", CTLTYPE_INT }, \
+	{ "redirtimeout", CTLTYPE_INT }, \
+	{ "tstamprepl", CTLTYPE_INT }, \
+	{ "stats", CTLTYPE_STRUCT } \
+}
 
 #ifdef _KERNEL
 
-void	icmp_statinc(u_int stat);
+#include <sys/percpu.h>
 
-#endif /* _KERNEL_ */
+enum icmpstat_counters {
+	icps_error,
+	icps_toofreq,
+	icps_oldshort,
+	icps_oldicmp,
+	icps_outhist,
+	icps_badcode = icps_outhist + ICMP_MAXTYPE + 1,
+	icps_tooshort,
+	icps_checksum,
+	icps_badlen,
+	icps_reflect,
+	icps_bmcastecho,
+	icps_inhist,
+	icps_ncounters = icps_inhist + ICMP_MAXTYPE + 1
+};
 
-#endif /* !_NETINET_ICMP_VAR_H_ */
+extern struct cpumem *icmpcounters;
+
+static inline void
+icmpstat_inc(enum icmpstat_counters c)
+{
+	counters_inc(icmpcounters, c);
+}
+
+#endif /* _KERNEL */
+#endif /* _NETINET_ICMP_VAR_H_ */

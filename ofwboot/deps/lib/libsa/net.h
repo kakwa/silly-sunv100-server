@@ -1,4 +1,5 @@
-/*	$NetBSD: net.h,v 1.28 2019/03/31 20:08:45 christos Exp $	*/
+/*	$OpenBSD: net.h,v 1.11 2020/05/18 17:01:02 patrick Exp $	*/
+/*	$NetBSD: net.h,v 1.10 1995/10/20 00:46:30 cgd Exp $	*/
 
 /*
  * Copyright (c) 1993 Adam Glass
@@ -38,27 +39,19 @@
  * SUCH DAMAGE.
  */
 
-#include <net/if_ether.h>	/* for ETHER_ADDR_LEN */
-#include <netinet/in.h>
-#include <netinet/in_systm.h>
-
 #ifndef _KERNEL	/* XXX - see <netinet/in.h> */
 #undef __IPADDR
 #define __IPADDR(x)	htonl((u_int32_t)(x))
 #endif
 
-#ifdef _STANDALONE
-#include <lib/libsa/iodesc.h>
-#else
-#include <iodesc.h>
-#endif
+#include "iodesc.h"
 
 #define BA { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }
 
-/* Returns true if n_long's on the same net */
+/* Returns true if u_int32_t's on the same net */
 #define	SAMENET(a1, a2, m) ((a1.s_addr & m) == (a2.s_addr & m))
 
-#define MACPY(s, d) memcpy(d, s, ETHER_ADDR_LEN)
+#define MACPY(s, d) bcopy((char *)s, (char *)d, 6)
 
 #define MAXTMO 20	/* seconds */
 #define MINTMO 2	/* seconds */
@@ -68,71 +61,64 @@
 #define RECV_SIZE 1536	/* XXX delete this */
 
 /*
- * How much room to leave for headers in UDP packets:
+ * How much room to leave for headers:
  *  14: struct ether_header
  *  20: struct ip
  *   8: struct udphdr
  * That's 42 but let's pad it out to 48 bytes.
  */
-#define ETHERNET_HEADER_SIZE 14
-#define IP_HEADER_SIZE 20
-#define UDP_HEADER_SIZE 8
+#define ETHER_SIZE 14
+struct packet_header {
+	/* guarantee int alignment */
+	int	pad[48 / sizeof(int)];
+};
 
-#define	UDP_TOTAL_HEADER_SIZE (ETHERNET_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE)
-
-/*
- * How much room to leave for headers in TCP packets:
- *  14: struct ether_header
- *  20: struct ip
- *  20: struct tcphdr
- */
-#define TCP_HEADER_SIZE 20
-
-#define TCP_TOTAL_HEADER_SIZE (ETHERNET_HEADER_SIZE + IP_HEADER_SIZE + TCP_HEADER_SIZE)
-
-extern	u_char bcea[ETHER_ADDR_LEN];
+extern	u_char bcea[6];
 extern	char rootpath[FNAME_SIZE];
 extern	char bootfile[FNAME_SIZE];
 extern	char hostname[FNAME_SIZE];
+extern	int hostnamelen;
+extern	char domainname[FNAME_SIZE];
+extern	int domainnamelen;
+extern	char ifname[IFNAME_SIZE];
 
 /* All of these are in network order. */
 extern	struct in_addr myip;
 extern	struct in_addr rootip;
+extern	struct in_addr swapip;
 extern	struct in_addr gateip;
-extern	n_long netmask;
+extern	struct in_addr nameip;
+extern	u_int32_t netmask;
 
 extern	int debug;			/* defined in the machdep sources */
+
+extern struct iodesc sockets[SOPEN_MAX];
 
 /* ARP/RevARP functions: */
 u_char	*arpwhohas(struct iodesc *, struct in_addr);
 void	arp_reply(struct iodesc *, void *);
 int	rarp_getipaddress(int);
+u_int32_t	ip_convertaddr(const char *);
 
 /* Link functions: */
-ssize_t sendether(struct iodesc *, void *, size_t, u_char *, int);
-ssize_t readether(struct iodesc *, void *, size_t, saseconds_t, u_int16_t *);
-
-ssize_t	sendip __P((struct iodesc *, void *, size_t, u_int8_t));
-ssize_t	readip __P((struct iodesc *, void *, size_t, time_t, u_int8_t));
+ssize_t sendether(struct iodesc *d, void *pkt, size_t len,
+	    u_char *dea, int etype);
+ssize_t readether(struct iodesc *d, void *pkt, size_t len,
+	    time_t tleft, u_int16_t *etype);
 
 ssize_t	sendudp(struct iodesc *, void *, size_t);
-ssize_t	readudp(struct iodesc *, void *, size_t, saseconds_t);
-
-int	tcp_connect __P((struct iodesc *));
-ssize_t	sendtcp __P((struct iodesc *, void *, size_t));
-ssize_t	readtcp __P((struct iodesc *, void *, size_t, time_t));
-
-ssize_t	sendrecv(struct iodesc *, ssize_t (*)(struct iodesc *, void *, size_t),
-    void *, size_t, ssize_t (*)(struct iodesc *, void *, size_t, saseconds_t),
-    void *, size_t);
+ssize_t	readudp(struct iodesc *, void *, size_t, time_t);
+ssize_t	sendrecv(struct iodesc *,
+	    ssize_t (*)(struct iodesc *, void *, size_t), void *, size_t,
+	    ssize_t (*)(struct iodesc *, void *, size_t, time_t),
+	    void *, size_t);
 
 /* Utilities: */
-char	*ether_sprintf(const u_char *);
-int	ip_cksum(const void *, size_t);
+const char *ether_sprintf(const u_char *);
+u_int16_t in_cksum(const void *, size_t);
+const char *inet_ntoa(struct in_addr);
+const char *intoa(u_int32_t);		/* similar to inet_ntoa */
+u_int32_t inet_addr(const char *);
 
 /* Machine-dependent functions: */
-#ifdef _STANDALONE	/* XXX for mount_nfs(8) SMALLPROG hack */
-satime_t	getsecs(void);
-#else
-#define getsecs() time(NULL)
-#endif
+time_t	getsecs(void);

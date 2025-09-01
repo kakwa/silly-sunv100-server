@@ -1,4 +1,5 @@
-/*	$NetBSD: if_loop.c,v 1.118 2022/09/04 23:34:51 thorpej Exp $	*/
+/*	$OpenBSD: if_loop.c,v 1.102 2025/07/07 02:28:50 jsg Exp $	*/
+/*	$NetBSD: if_loop.c,v 1.15 1996/05/07 02:40:33 thorpej Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -57,454 +58,253 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)if_loop.c	8.2 (Berkeley) 1/9/95
+ *	@(#)if_loop.c	8.1 (Berkeley) 6/10/93
+ */
+
+/*
+ *	@(#)COPYRIGHT	1.1 (NRL) 17 January 1995
+ *
+ * NRL grants permission for redistribution and use in source and binary
+ * forms, with or without modification, of the software and documentation
+ * created at NRL provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgements:
+ *	This product includes software developed by the University of
+ *	California, Berkeley and its contributors.
+ *	This product includes software developed at the Information
+ *	Technology Division, US Naval Research Laboratory.
+ * 4. Neither the name of the NRL nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THE SOFTWARE PROVIDED BY NRL IS PROVIDED BY NRL AND CONTRIBUTORS ``AS
+ * IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+ * PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL NRL OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * The views and conclusions contained in the software and documentation
+ * are those of the authors and should not be interpreted as representing
+ * official policies, either expressed or implied, of the US Naval
+ * Research Laboratory (NRL).
  */
 
 /*
  * Loopback interface driver for protocol testing and timing.
  */
 
-#include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_loop.c,v 1.118 2022/09/04 23:34:51 thorpej Exp $");
-
-#ifdef _KERNEL_OPT
-#include "opt_inet.h"
-#include "opt_atalk.h"
-#include "opt_mbuftrace.h"
-#include "opt_mpls.h"
-#include "opt_net_mpsafe.h"
-#endif
+#include "bpfilter.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/kernel.h>
 #include <sys/mbuf.h>
 #include <sys/socket.h>
 #include <sys/errno.h>
 #include <sys/ioctl.h>
-#include <sys/time.h>
-#include <sys/device.h>
-#include <sys/module.h>
-
-#include <sys/cpu.h>
 
 #include <net/if.h>
+#include <net/if_var.h>
 #include <net/if_types.h>
+#include <net/rtable.h>
 #include <net/route.h>
 
-#ifdef	INET
-#include <netinet/in.h>
-#include <netinet/in_systm.h>
-#include <netinet/in_var.h>
-#include <netinet/in_offload.h>
-#include <netinet/ip.h>
-#include <netinet/ip_var.h>
-#endif
-
-#ifdef INET6
-#ifndef INET
-#include <netinet/in.h>
-#endif
-#include <netinet6/in6_var.h>
-#include <netinet6/in6_offload.h>
-#include <netinet/ip6.h>
-#endif
-
-#ifdef MPLS
-#include <netmpls/mpls.h>
-#include <netmpls/mpls_var.h>
-#endif
-
-#ifdef NETATALK
-#include <netatalk/at.h>
-#include <netatalk/at_var.h>
-#endif
-
+#if NBPFILTER > 0
 #include <net/bpf.h>
-
-#if defined(LARGE_LOMTU)
-#define LOMTU	(131072 +  MHLEN + MLEN)
-#define LOMTU_MAX LOMTU
-#else
-#define	LOMTU	(32768 +  MHLEN + MLEN)
-#define	LOMTU_MAX	(65536 +  MHLEN + MLEN)
 #endif
 
-#ifdef ALTQ
-static void	lostart(struct ifnet *);
-#endif
+#define	LOMTU	32768
 
-static int	loop_clone_create(struct if_clone *, int);
-static int	loop_clone_destroy(struct ifnet *);
+int	loioctl(struct ifnet *, u_long, caddr_t);
+void	loopattach(int);
+void	lortrequest(struct ifnet *, int, struct rtentry *);
+void	loinput(struct ifnet *, struct mbuf *, struct netstack *);
+int	looutput(struct ifnet *,
+	    struct mbuf *, struct sockaddr *, struct rtentry *);
+int	lo_bpf_mtap(caddr_t, const struct mbuf *, u_int);
 
-static void	loop_rtrequest(int, struct rtentry *, const struct rt_addrinfo *);
+int	loop_clone_create(struct if_clone *, int);
+int	loop_clone_destroy(struct ifnet *);
 
-static struct if_clone loop_cloner =
+struct if_clone loop_cloner =
     IF_CLONE_INITIALIZER("lo", loop_clone_create, loop_clone_destroy);
 
 void
 loopattach(int n)
 {
+	if (loop_clone_create(&loop_cloner, 0))
+		panic("unable to create lo0");
 
-#ifndef _MODULE
-	loop_clone_create(&loop_cloner, 0);	/* lo0 always exists */
-#endif
-}
-
-void
-loopinit(void)
-{
-
-	if (lo0ifp != NULL)	/* can happen in rump kernel */
-		return;
-
-#ifdef _MODULE
-	loop_clone_create(&loop_cloner, 0);	/* lo0 always exists */
-#endif
 	if_clone_attach(&loop_cloner);
 }
 
-static int
-loopdetach(void)
-{
-	/* no detach for now; we don't allow lo0 to be deleted */
-	return EBUSY;
-}
-
-static int
+int
 loop_clone_create(struct if_clone *ifc, int unit)
 {
 	struct ifnet *ifp;
 
-	ifp = if_alloc(IFT_LOOP);
-
-	if_initname(ifp, ifc->ifc_name, unit);
-
+	ifp = malloc(sizeof(*ifp), M_DEVBUF, M_WAITOK|M_ZERO);
+	snprintf(ifp->if_xname, sizeof ifp->if_xname, "lo%d", unit);
+	ifp->if_softc = NULL;
 	ifp->if_mtu = LOMTU;
 	ifp->if_flags = IFF_LOOPBACK | IFF_MULTICAST;
-#ifdef NET_MPSAFE
-	ifp->if_extflags = IFEF_MPSAFE;
-#endif
+	ifp->if_xflags = IFXF_CLONED | IFXF_LRO;
+	ifp->if_capabilities = IFCAP_CSUM_IPv4 |
+	    IFCAP_CSUM_TCPv4 | IFCAP_CSUM_UDPv4 |
+	    IFCAP_CSUM_TCPv6 | IFCAP_CSUM_UDPv6 |
+	    IFCAP_LRO | IFCAP_TSOv4 | IFCAP_TSOv6;
+	ifp->if_bpf_mtap = lo_bpf_mtap;
+	ifp->if_rtrequest = lortrequest;
 	ifp->if_ioctl = loioctl;
+	ifp->if_input = loinput;
 	ifp->if_output = looutput;
-#ifdef ALTQ
-	ifp->if_start = lostart;
-#endif
 	ifp->if_type = IFT_LOOP;
-	ifp->if_hdrlen = 0;
-	ifp->if_addrlen = 0;
-	ifp->if_dlt = DLT_NULL;
-	IFQ_SET_READY(&ifp->if_snd);
-	if (unit == 0)
-		lo0ifp = ifp;
-	if_initialize(ifp);
-	ifp->if_link_state = LINK_STATE_UP;
+	ifp->if_hdrlen = sizeof(u_int32_t);
+	if_counters_alloc(ifp);
+	if (unit == 0) {
+		if_attachhead(ifp);
+		if_addgroup(ifp, ifc->ifc_name);
+		rtable_l2set(0, 0, ifp->if_index);
+	} else
+		if_attach(ifp);
+	if_attach_queues(ifp, net_sn_count());
+	if_attach_iqueues(ifp, net_sn_count());
 	if_alloc_sadl(ifp);
-	bpf_attach(ifp, DLT_NULL, sizeof(u_int));
-#ifdef MBUFTRACE
-	ifp->if_mowner = malloc(sizeof(struct mowner), M_DEVBUF,
-	    M_WAITOK | M_ZERO);
-	strlcpy(ifp->if_mowner->mo_name, ifp->if_xname,
-	    sizeof(ifp->if_mowner->mo_name));
-	MOWNER_ATTACH(ifp->if_mowner);
+#if NBPFILTER > 0
+	bpfattach(&ifp->if_bpf, ifp, DLT_LOOP, sizeof(u_int32_t));
 #endif
-
-	ifp->if_flags |= IFF_RUNNING;
-	if_register(ifp);
-
-	return (0);
-}
-
-static int
-loop_clone_destroy(struct ifnet *ifp)
-{
-
-	if (ifp == lo0ifp)
-		return (EPERM);
-
-	ifp->if_flags &= ~IFF_RUNNING;
-
-#ifdef MBUFTRACE
-	MOWNER_DETACH(ifp->if_mowner);
-	free(ifp->if_mowner, M_DEVBUF);
-#endif
-
-	bpf_detach(ifp);
-	if_detach(ifp);
-
-	if_free(ifp);
-
 	return (0);
 }
 
 int
-looutput(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
-    const struct rtentry *rt)
+loop_clone_destroy(struct ifnet *ifp)
 {
-	pktqueue_t *pktq = NULL;
-	int s;
-	int csum_flags;
-	int error = 0;
-	size_t pktlen;
+	struct ifnet	*p;
+	unsigned int	 rdomain = 0;
 
-	MCLAIM(m, ifp->if_mowner);
+	if (ifp->if_index == rtable_loindex(ifp->if_rdomain)) {
+		/* rdomain 0 always needs a loopback */
+		if (ifp->if_rdomain == 0)
+			return (EPERM);
 
-	KERNEL_LOCK_UNLESS_NET_MPSAFE();
+		/* if there is any other interface in this rdomain, deny */
+		NET_LOCK_SHARED();
+		TAILQ_FOREACH(p, &ifnetlist, if_list) {
+			if (p->if_rdomain != ifp->if_rdomain)
+				continue;
+			if (p->if_index == ifp->if_index)
+				continue;
+			NET_UNLOCK_SHARED();
+			return (EBUSY);
+		}
+		NET_UNLOCK_SHARED();
+
+		rdomain = ifp->if_rdomain;
+	}
+
+	if_detach(ifp);
+
+	free(ifp, M_DEVBUF, sizeof(*ifp));
+
+	if (rdomain)
+		rtable_l2set(rdomain, 0, 0);
+	return (0);
+}
+
+int
+lo_bpf_mtap(caddr_t if_bpf, const struct mbuf *m, u_int dir)
+{
+	/* loopback dumps on output, disable input bpf */
+	return (0);
+}
+
+void
+loinput(struct ifnet *ifp, struct mbuf *m, struct netstack *ns)
+{
+	int error;
 
 	if ((m->m_flags & M_PKTHDR) == 0)
-		panic("looutput: no header mbuf");
-	if (ifp->if_flags & IFF_LOOPBACK)
-		bpf_mtap_af(ifp, dst->sa_family, m, BPF_D_OUT);
-	m_set_rcvif(m, ifp);
+		panic("%s: no header mbuf", __func__);
+
+	error = if_input_local(ifp, m, m->m_pkthdr.ph_family, ns);
+	if (error)
+		counters_inc(ifp->if_counters, ifc_ierrors);
+}
+
+int
+looutput(struct ifnet *ifp, struct mbuf *m, struct sockaddr *dst,
+    struct rtentry *rt)
+{
+	if ((m->m_flags & M_PKTHDR) == 0)
+		panic("%s: no header mbuf", __func__);
 
 	if (rt && rt->rt_flags & (RTF_REJECT|RTF_BLACKHOLE)) {
 		m_freem(m);
-		error = (rt->rt_flags & RTF_BLACKHOLE ? 0 :
+		return (rt->rt_flags & RTF_BLACKHOLE ? 0 :
 			rt->rt_flags & RTF_HOST ? EHOSTUNREACH : ENETUNREACH);
-		goto out;
 	}
 
-	pktlen = m->m_pkthdr.len;
-
-	if_statadd2(ifp, if_opackets, 1, if_obytes, pktlen);
-
-#ifdef ALTQ
 	/*
-	 * ALTQ on the loopback interface is just for debugging.  It's
-	 * used only for loopback interfaces, not for a simplex interface.
+	 * Do not call if_input_local() directly.  Queue the packet to avoid
+	 * stack overflow and make TCP handshake over loopback work.
 	 */
-	if ((ALTQ_IS_ENABLED(&ifp->if_snd) || TBR_IS_ENABLED(&ifp->if_snd)) &&
-	    ifp->if_start == lostart) {
-		/*
-		 * If the queueing discipline needs packet classification,
-		 * do it before prepending the link headers.
-		 */
-		IFQ_CLASSIFY(&ifp->if_snd, m, dst->sa_family);
-
-		M_PREPEND(m, sizeof(uint32_t), M_DONTWAIT);
-		if (m == NULL) {
-			if_statinc(ifp, if_oerrors);
-			error = ENOBUFS;
-			goto out;
-		}
-		*(mtod(m, uint32_t *)) = dst->sa_family;
-
-		error = if_transmit_lock(ifp, m);
-		goto out;
-	}
-#endif /* ALTQ */
-
-	m_tag_delete_chain(m);
-
-#ifdef MPLS
-	bool is_mpls = false;
-	if (rt != NULL && rt_gettag(rt) != NULL &&
-	    rt_gettag(rt)->sa_family == AF_MPLS &&
-	    (m->m_flags & (M_MCAST | M_BCAST)) == 0) {
-		union mpls_shim msh;
-		msh.s_addr = MPLS_GETSADDR(rt);
-		if (msh.shim.label != MPLS_LABEL_IMPLNULL) {
-			is_mpls = true;
-			pktq = mpls_pktq;
-		}
-	}
-	if (!is_mpls)
-#endif
-	switch (dst->sa_family) {
-
-#ifdef INET
-	case AF_INET:
-		csum_flags = m->m_pkthdr.csum_flags;
-		KASSERT((csum_flags & ~(M_CSUM_IPv4|M_CSUM_UDPv4)) == 0);
-		if (csum_flags != 0 && IN_LOOPBACK_NEED_CHECKSUM(csum_flags)) {
-			in_undefer_cksum(m, 0, csum_flags);
-			m->m_pkthdr.csum_flags = 0;
-		} else {
-			/*
-			 * Do nothing. Pass M_CSUM_IPv4 and M_CSUM_UDPv4 as
-			 * they are to tell those are calculated and good.
-			 */
-		}
-		pktq = ip_pktq;
-		break;
-#endif
-#ifdef INET6
-	case AF_INET6:
-		csum_flags = m->m_pkthdr.csum_flags;
-		KASSERT((csum_flags & ~M_CSUM_UDPv6) == 0);
-		if (csum_flags != 0 &&
-		    IN6_LOOPBACK_NEED_CHECKSUM(csum_flags)) {
-			in6_undefer_cksum(m, 0, csum_flags);
-			m->m_pkthdr.csum_flags = 0;
-		} else {
-			/*
-			 * Do nothing. Pass M_CSUM_UDPv6 as
-			 * they are to tell those are calculated and good.
-			 */
-		}
-		m->m_flags |= M_LOOP;
-		pktq = ip6_pktq;
-		break;
-#endif
-#ifdef NETATALK
-	case AF_APPLETALK:
-		pktq = at_pktq2;
-		break;
-#endif
-	default:
-		printf("%s: can't handle af%d\n", ifp->if_xname,
-		    dst->sa_family);
-		m_freem(m);
-		error = EAFNOSUPPORT;
-		goto out;
-	}
-
-	KASSERT(pktq != NULL);
-
-	error = 0;
-	s = splnet();
-	if (__predict_true(pktq_enqueue(pktq, m, 0))) {
-		if_statadd2(ifp, if_ipackets, 1, if_ibytes, pktlen);
-	} else {
-		m_freem(m);
-		if_statinc(ifp, if_oerrors);
-		error = ENOBUFS;
-	}
-	splx(s);
-out:
-	KERNEL_UNLOCK_UNLESS_NET_MPSAFE();
-	return error;
+	return (if_output_local(ifp, m, dst->sa_family));
 }
 
-#ifdef ALTQ
-static void
-lostart(struct ifnet *ifp)
+void
+lortrequest(struct ifnet *ifp, int cmd, struct rtentry *rt)
 {
-	for (;;) {
-		pktqueue_t *pktq = NULL;
-		struct mbuf *m;
-		size_t pktlen;
-		uint32_t af;
-		int s;
-
-		IFQ_DEQUEUE(&ifp->if_snd, m);
-		if (m == NULL)
-			return;
-
-		af = *(mtod(m, uint32_t *));
-		m_adj(m, sizeof(uint32_t));
-
-		switch (af) {
-#ifdef INET
-		case AF_INET:
-			pktq = ip_pktq;
-			break;
-#endif
-#ifdef INET6
-		case AF_INET6:
-			m->m_flags |= M_LOOP;
-			pktq = ip6_pktq;
-			break;
-#endif
-#ifdef NETATALK
-		case AF_APPLETALK:
-			pktq = at_pktq2;
-			break;
-#endif
-		default:
-			printf("%s: can't handle af%d\n", ifp->if_xname, af);
-			m_freem(m);
-			return;
-		}
-		pktlen = m->m_pkthdr.len;
-
-		KASSERT(pktq != NULL);
-
-		s = splnet();
-		if (__predict_false(pktq_enqueue(pktq, m, 0))) {
-			m_freem(m);
-			splx(s);
-			return;
-		}
-		if_statadd2(ifp, if_ipackets, 1, if_ibytes, pktlen);
-		splx(s);
-	}
-}
-#endif /* ALTQ */
-
-/* ARGSUSED */
-static void
-loop_rtrequest(int cmd, struct rtentry *rt,
-    const struct rt_addrinfo *info)
-{
-
-	if (rt)
-		rt->rt_rmx.rmx_mtu = lo0ifp->if_mtu;
+	if (rt != NULL)
+		atomic_cas_uint(&rt->rt_mtu, 0, LOMTU);
 }
 
 /*
  * Process an ioctl request.
  */
-/* ARGSUSED */
 int
-loioctl(struct ifnet *ifp, u_long cmd, void *data)
+loioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 {
-	struct ifaddr *ifa;
-	struct ifreq *ifr = data;
+	struct ifreq *ifr;
 	int error = 0;
 
 	switch (cmd) {
+	case SIOCSIFFLAGS:
+		if (ISSET(ifp->if_xflags, IFXF_LRO))
+			SET(ifp->if_capabilities, IFCAP_TSOv4 | IFCAP_TSOv6);
+		else
+			CLR(ifp->if_capabilities, IFCAP_TSOv4 | IFCAP_TSOv6);
+		break;
 
-	case SIOCINITIFADDR:
-		ifp->if_flags |= IFF_UP;
-		ifa = (struct ifaddr *)data;
-		if (ifa != NULL)
-			ifa->ifa_rtrequest = loop_rtrequest;
+	case SIOCSIFADDR:
+		ifp->if_flags |= IFF_RUNNING;
+		if_up(ifp);		/* send up RTM_IFINFO */
 		/*
 		 * Everything else is done at a higher level.
 		 */
 		break;
 
-	case SIOCSIFMTU:
-		if ((unsigned)ifr->ifr_mtu > LOMTU_MAX)
-			error = EINVAL;
-		else if ((error = ifioctl_common(ifp, cmd, data)) == ENETRESET){
-			error = 0;
-		}
-		break;
-
 	case SIOCADDMULTI:
 	case SIOCDELMULTI:
-		if (ifr == NULL) {
-			error = EAFNOSUPPORT;		/* XXX */
-			break;
-		}
-		switch (ifreq_getaddr(cmd, ifr)->sa_family) {
+		break;
 
-#ifdef INET
-		case AF_INET:
-			break;
-#endif
-#ifdef INET6
-		case AF_INET6:
-			break;
-#endif
-
-		default:
-			error = EAFNOSUPPORT;
-			break;
-		}
+	case SIOCSIFMTU:
+		ifr = (struct ifreq *)data;
+		ifp->if_mtu = ifr->ifr_mtu;
 		break;
 
 	default:
-		error = ifioctl_common(ifp, cmd, data);
+		error = ENOTTY;
 	}
 	return (error);
 }
-
-/*
- * Module infrastructure
- */
-#include "if_module.h"
-
-IF_MODULE(MODULE_CLASS_DRIVER, loop, NULL)

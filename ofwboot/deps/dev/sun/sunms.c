@@ -1,17 +1,8 @@
-/*	$NetBSD: sunms.c,v 1.35 2021/08/07 16:19:16 thorpej Exp $	*/
+/*	$OpenBSD: sunms.c,v 1.3 2022/01/09 05:43:00 jsg Exp $	*/
 
 /*
- * Copyright (c) 1992, 1993
- *	The Regents of the University of California.  All rights reserved.
- *
- * This software was developed by the Computer Systems Engineering group
- * at Lawrence Berkeley Laboratory under DARPA contract BG 91-66 and
- * contributed to Berkeley.
- *
- * All advertising materials mentioning features or use of this software
- * must display the following acknowledgement:
- *	This product includes software developed by the University of
- *	California, Lawrence Berkeley Laboratory.
+ * Copyright (c) 2002, 2009, Miodrag Vallat
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -21,38 +12,25 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of the University nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- *
- *	@(#)ms.c	8.1 (Berkeley) 6/11/93
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 /*
- * Mouse driver (/dev/mouse)
- */
-
-/*
- * Zilog Z8530 Dual UART driver (mouse interface)
+ * Common Sun mouse handling code.
  *
- * This is the "slave" driver that will be attached to
- * the "zsc" driver for a Sun mouse.
+ * This code supports 3- and 5- byte Mouse Systems protocols, and speeds of
+ * 1200, 4800 and 9600 bps.
  */
-
-#include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sunms.c,v 1.35 2021/08/07 16:19:16 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -61,212 +39,203 @@ __KERNEL_RCSID(0, "$NetBSD: sunms.c,v 1.35 2021/08/07 16:19:16 thorpej Exp $");
 #include <sys/ioctl.h>
 #include <sys/kernel.h>
 #include <sys/proc.h>
-#include <sys/signal.h>
-#include <sys/signalvar.h>
 #include <sys/time.h>
-#include <sys/select.h>
-#include <sys/syslog.h>
-#include <sys/fcntl.h>
-#include <sys/tty.h>
-
-#include <machine/vuid_event.h>
-
-#include <dev/sun/event_var.h>
-#include <dev/sun/msvar.h>
-#include <dev/sun/kbd_ms_ttyvar.h>
+#include <sys/timeout.h>
 
 #include <dev/wscons/wsconsio.h>
 #include <dev/wscons/wsmousevar.h>
 
-#include "ms.h"
-#include "wsmouse.h"
-#if NMS > 0
-
-#ifdef SUN_MS_BPS
-int	sunms_bps = SUN_MS_BPS;
-#else
-int	sunms_bps = MS_DEFAULT_BPS;
-#endif
-
-static int	sunms_match(device_t, cfdata_t, void *);
-static void	sunms_attach(device_t, device_t, void *);
-static int	sunmsiopen(device_t, int mode);
-int	sunmsinput(int, struct tty *);
-
-CFATTACH_DECL_NEW(ms_tty, sizeof(struct ms_softc),
-    sunms_match, sunms_attach, NULL, NULL);
-
-struct linesw sunms_disc = {
-	.l_name = "sunms",
-	.l_open = ttylopen,
-	.l_close = ttylclose,
-	.l_read = ttyerrio,
-	.l_write = ttyerrio,
-	.l_ioctl = ttynullioctl,
-	.l_rint = sunmsinput,
-	.l_start = ttstart,
-	.l_modem = nullmodem,
-	.l_poll = ttpoll
-};
-
-int	sunms_enable(void *);
-int	sunms_ioctl(void *, u_long, void *, int, struct lwp *);
-void	sunms_disable(void *);
-
-const struct wsmouse_accessops	sunms_accessops = {
-	sunms_enable,
-	sunms_ioctl,
-	sunms_disable,
-};
-
-/*
- * ms_match: how is this zs channel configured?
- */
-int
-sunms_match(device_t parent, cfdata_t cf, void *aux)
-{
-	struct kbd_ms_tty_attach_args *args = aux;
-
-	if (sunms_bps == 0)
-		return 0;
-
-	if (strcmp(args->kmta_name, "mouse") == 0)
-		return (1);
-
-	return 0;
-}
+#include <dev/sun/sunmsvar.h>
 
 void
-sunms_attach(device_t parent, device_t self, void *aux)
+sunms_attach(struct sunms_softc *sc, const struct wsmouse_accessops *ao)
 {
-	struct ms_softc *ms = device_private(self);
-	struct kbd_ms_tty_attach_args *args = aux;
-	struct tty *tp = args->kmta_tp;
-#if NWSMOUSE > 0
 	struct wsmousedev_attach_args a;
-#endif
 
-	ms->ms_dev = self;
-	tp->t_sc  = ms;
-	tp->t_dev = args->kmta_dev;
-	ms->ms_priv = tp;
-	ms->ms_deviopen = sunmsiopen;
-	ms->ms_deviclose = NULL;
+	printf("\n");
 
-	aprint_normal("\n");
+	/* Initialize state machine. */
+	sc->sc_state = STATE_PROBING;
+	sc->sc_bps = INIT_SPEED;
+	timeout_set(&sc->sc_abort_tmo, sunms_abort_input, sc);
 
-	/* Initialize the speed, etc. */
-	if (ttyldisc_attach(&sunms_disc) != 0)
-		panic("sunms_attach: sunms_disc");
-	ttyldisc_release(tp->t_linesw);
-	tp->t_linesw = ttyldisc_lookup(sunms_disc.l_name);
-	KASSERT(tp->t_linesw == &sunms_disc);
-	tp->t_oflag &= ~OPOST;
-	SET(tp->t_state, TS_KERN_ONLY);
-
-	/* Initialize translator. */
-	ms->ms_byteno = -1;
-
-#if NWSMOUSE > 0
 	/*
-	 * attach wsmouse
+	 * Note that it doesn't matter if a long time elapses between this
+	 * and the moment interrupts are enabled, as we either have the
+	 * right speed, and will switch to decode state, or get a break
+	 * or a framing error, causing an immediate speed change.
 	 */
-	a.accessops = &sunms_accessops;
-	a.accesscookie = ms;
+	getmicrotime(&sc->sc_lastbpschange);
 
-	ms->ms_wsmousedev = config_found(self, &a, wsmousedevprint, CFARGS_NONE);
+	a.accessops = ao;
+	a.accesscookie = sc;
+	sc->sc_wsmousedev = config_found(&sc->sc_dev, &a, wsmousedevprint);
+}
+
+int
+sunms_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
+{
+#if 0
+	struct sunms_softc *sc = v;
 #endif
-}
-
-/*
- * Internal open routine.  This really should be inside com.c
- * But I'm putting it here until we have a generic internal open
- * mechanism.
- */
-int
-sunmsiopen(device_t dev, int flags)
-{
-	struct ms_softc *ms = device_private(dev);
-	struct tty *tp = ms->ms_priv;
-	struct lwp *l = curlwp ? curlwp : &lwp0;
-	struct termios t;
-	int error;
-
-	/* Open the lower device */
-	CLR(tp->t_state, TS_KERN_ONLY);
-	if ((error = cdev_open(tp->t_dev, O_NONBLOCK|flags,
-				     0/* ignored? */, l)) != 0)
-		return (error);
-
-	/* Now configure it for the console. */
-	tp->t_ospeed = 0;
-	t.c_ispeed = sunms_bps;
-	t.c_ospeed = sunms_bps;
-	t.c_cflag =  CLOCAL|CS8;
-	(*tp->t_param)(tp, &t);
-	SET(tp->t_state, TS_KERN_ONLY);
-
-	return (0);
-}
-
-int
-sunmsinput(int c, struct tty *tp)
-{
-	struct ms_softc *ms = tp->t_sc;
-
-	if (c & TTY_ERRORMASK) c = -1;
-	else c &= TTY_CHARMASK;
-
-	/* Pass this up to the "middle" layer. */
-	ms_input(ms, c);
-	return (0);
-}
-
-int
-sunms_ioctl(void *v, u_long cmd, void *data, int flag, struct lwp *l)
-{
-/*	struct ms_softc *sc = v; */
 
 	switch (cmd) {
 	case WSMOUSEIO_GTYPE:
-		*(u_int *)data = WSMOUSE_TYPE_PS2; /* XXX  */
+		*(u_int *)data = WSMOUSE_TYPE_SUN;
 		break;
 
 	default:
-		return (EPASSTHROUGH);
+		return -1;
 	}
-	return (0);
-}
-
-int
-sunms_enable(void *v)
-{
-	struct ms_softc *ms = v;
-	int err;
-	int s;
-
-	if (ms->ms_ready)
-		return EBUSY;
-
-	err = sunmsiopen(ms->ms_dev, 0);
-	if (err)
-		return err;
-
-	s = spltty();
-	ms->ms_ready = 2;
-	splx(s);
 
 	return 0;
 }
 
+/*
+ * Reinitialize the line to a different speed.  Invoked at spltty().
+ */
 void
-sunms_disable(void *v)
+sunms_speed_change(struct sunms_softc *sc)
 {
-	struct ms_softc *ms = v;
+	uint bps;
+
+	switch (sc->sc_bps) {
+	default:
+	case 9600:
+		bps = 4800;
+		break;
+	case 4800:
+		bps = 1200;
+		break;
+	case 1200:
+		bps = 9600;
+		break;
+	}
+
+#ifdef DEBUG
+	printf("%s: %d bps\n", sc->sc_dev.dv_xname, bps);
+#endif
+	microtime(&sc->sc_lastbpschange);
+
+	(*sc->sc_speed_change)(sc, bps);
+	sc->sc_state = STATE_PROBING;
+	sc->sc_bps = bps;
+	sc->sc_brk = 0;
+	timeout_del(&sc->sc_abort_tmo);
+}
+
+/*
+ * Process actual mouse data.  Invoked at spltty().
+ */
+void
+sunms_input(struct sunms_softc *sc, int c)
+{
+	struct timeval curtime;
+
+	if (sc->sc_wsmousedev == NULL)
+		return;	/* why bother */
+
+	if (sc->sc_state == STATE_RATE_CHANGE)
+		return;	/* not ready yet */
+
+	/*
+	 * If we have changed speed recently, ignore data for a few
+	 * milliseconds to make sure that either we'll detect the speed
+	 * is still not correct, or discard potential noise resulting
+	 * from the speed change.
+	 */
+	if (sc->sc_state == STATE_PROBING) {
+		microtime(&curtime);
+		timersub(&curtime, &sc->sc_lastbpschange, &curtime);
+		if (curtime.tv_sec != 0 ||
+		    curtime.tv_usec >= 200 * 1000) {
+			sc->sc_state = STATE_DECODING;
+			sc->sc_byteno = -1;
+		} else
+			return;
+	}
+
+	/*
+	 * The Sun mice use either 3 byte or 5 byte packets. The
+	 * first byte of each packet has the topmost bit set;
+	 * however motion parts of the packet may have the topmost
+	 * bit set too; so we only check for a first byte pattern
+	 * when we are not currently processing a packet.
+	 */
+	if (sc->sc_byteno < 0) {
+		if (ISSET(c, 0x80) && !ISSET(c, 0x30))
+			sc->sc_byteno = 0;
+		else
+			return;
+	}
+
+	switch (sc->sc_byteno) {
+	case 0:
+		/*
+		 * First packet has bit 7 set; bits 0-2 are button states,
+		 * and bit 3 is set if it is a short (3 byte) packet.
+		 * On the Tadpole SPARCbook, mice connected to the external
+		 * connector will also have bit 6 set to allow it to be
+		 * differentiated from the onboard pointer.
+		 */
+		sc->sc_pktlen = ISSET(c, 0x08) ? 3 : 5;
+		sc->sc_mb = 0;
+		if (!ISSET(c, 1 << 2))	/* left button */
+			sc->sc_mb |= 1 << 0;
+		if (!ISSET(c, 1 << 1))	/* middle button */
+			sc->sc_mb |= 1 << 1;
+		if (!ISSET(c, 1 << 0))	/* right button */
+			sc->sc_mb |= 1 << 2;
+		sc->sc_byteno++;
+
+		/*
+		 * In case we do not receive the whole packet, we need
+		 * to be able to reset sc_byteno.
+		 *
+		 * At 1200bps 8N2, a five byte packet will span 50 bits
+		 * and thus will transmit in 1/24 second, or about 42ms.
+		 *
+		 * A reset timeout of 100ms will be more than enough.
+		 */
+		timeout_add_msec(&sc->sc_abort_tmo, 100);
+
+		break;
+	case 1:
+	case 3:
+		/*
+		 * Following bytes contain signed 7 bit X, then Y deltas.
+		 * Short packets only have one set of deltas (and are
+		 * thus usually used on 4800 baud mice).
+		 */
+		sc->sc_dx += (int8_t)c;
+		sc->sc_byteno++;
+		break;
+	case 2:
+	case 4:
+		sc->sc_dy += (int8_t)c;
+		sc->sc_byteno++;
+		break;
+	}
+
+	if (sc->sc_byteno == sc->sc_pktlen) {
+		timeout_del(&sc->sc_abort_tmo);
+		sc->sc_byteno = -1;
+		WSMOUSE_INPUT(sc->sc_wsmousedev,
+		    sc->sc_mb, sc->sc_dx, sc->sc_dy, 0, 0);
+		sc->sc_dx = sc->sc_dy = 0;
+	}
+}
+
+void
+sunms_abort_input(void *v)
+{
+	struct sunms_softc *sc = v;
 	int s;
 
+#ifdef DEBUG
+	printf("aborting incomplete packet\n");
+#endif
 	s = spltty();
-	ms->ms_ready = 0;
+	sc->sc_byteno = -1;
 	splx(s);
 }
-#endif

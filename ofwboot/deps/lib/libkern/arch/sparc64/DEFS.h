@@ -1,4 +1,5 @@
-/*	$NetBSD: DEFS.h,v 1.3 2005/12/11 12:24:45 christos Exp $	*/
+/*	$OpenBSD: DEFS.h,v 1.3 2003/06/02 23:28:09 millert Exp $	*/
+/*	$NetBSD: DEFS.h,v 1.1.1.1 1998/06/20 05:18:14 eeh Exp $	*/
 
 /*-
  * Copyright (c) 1992, 1993

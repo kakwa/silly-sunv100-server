@@ -1,4 +1,5 @@
-/*	$NetBSD: un.h,v 1.61 2023/11/08 19:27:13 jschauma Exp $	*/
+/*	$OpenBSD: un.h,v 1.14 2015/07/18 15:00:01 guenther Exp $	*/
+/*	$NetBSD: un.h,v 1.11 1996/02/04 02:12:47 christos Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1993
@@ -28,85 +29,37 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)un.h	8.3 (Berkeley) 2/19/95
+ *	@(#)un.h	8.1 (Berkeley) 6/2/93
  */
 
 #ifndef _SYS_UN_H_
-#define _SYS_UN_H_
+#define	_SYS_UN_H_
 
-#include <sys/ansi.h>
-#include <sys/featuretest.h>
-#include <sys/types.h>
+#include <sys/cdefs.h>
+#include <sys/_types.h>
 
-#ifndef sa_family_t
-typedef __sa_family_t	sa_family_t;
-#define sa_family_t	__sa_family_t
+#ifndef	_SA_FAMILY_T_DEFINED_
+#define	_SA_FAMILY_T_DEFINED_
+typedef	__sa_family_t	sa_family_t;	/* sockaddr address family type */
 #endif
-
-/*
- * Historically, (struct sockaddr) needed to fit inside an mbuf.
- * For this reason, UNIX domain sockets were therefore limited to
- * 104 bytes. While this limit is no longer necessary, it is kept for
- * binary compatibility reasons.
- */
-#define	SUNPATHLEN	104
 
 /*
  * Definitions for UNIX IPC domain.
  */
 struct	sockaddr_un {
-	uint8_t		sun_len;		/* total sockaddr length */
-	sa_family_t	sun_family;		/* AF_LOCAL */
-	char		sun_path[SUNPATHLEN];	/* path name (gag) */
+	unsigned char	sun_len;	/* sockaddr len excluding NUL */
+	sa_family_t	sun_family;	/* AF_UNIX */
+	char	sun_path[104];		/* path name (gag) */
 };
 
-/*
- * Socket options for UNIX IPC domain.
- */
-#if defined(_NETBSD_SOURCE)
-#define SOL_LOCAL	0		/* options level for getsockopt(2) */
-#define	LOCAL_OCREDS	0x0001		/* pass credentials to receiver */
-#define	LOCAL_CONNWAIT	0x0002		/* connects block until accepted */
-#define	LOCAL_PEEREID	0x0003		/* get peer identification */
-#define	LOCAL_CREDS	0x0004		/* pass credentials to receiver */
-#endif
-
-/*
- * Data automatically stored inside connect() for use by LOCAL_PEEREID
- */
-struct unpcbid {
-	pid_t unp_pid;		/* process id */
-	uid_t unp_euid;		/* effective user id */
-	gid_t unp_egid;		/* effective group id */
-};
-
-#ifdef _KERNEL
-
-struct unpcb;
-struct socket;
-struct sockopt;
-struct sockaddr;
-
-extern const struct pr_usrreqs unp_usrreqs;
-
-int	uipc_ctloutput(int, struct socket *, struct sockopt *);
-void	uipc_init(void);
-kmutex_t *uipc_dgramlock(void);
-kmutex_t *uipc_streamlock(void);
-kmutex_t *uipc_rawlock(void);
-
-int	unp_connect(struct socket *, struct sockaddr *, struct lwp *);
-int	unp_connect2(struct socket *, struct socket *);
-void 	unp_dispose(struct mbuf *);
-int 	unp_externalize(struct mbuf *, struct lwp *, int);
-
-#else /* !_KERNEL */
+#ifndef _KERNEL
+#if __BSD_VISIBLE
 
 /* actual length of an initialized sockaddr_un */
-#if defined(_NETBSD_SOURCE)
 #define SUN_LEN(su) \
 	(sizeof(*(su)) - sizeof((su)->sun_path) + strlen((su)->sun_path))
-#endif /* !_NetBSD_SOURCE */
-#endif /* _KERNEL */
 
+#endif /* __BSD_VISIBLE */
+
+#endif /* _KERNEL */
 #endif /* !_SYS_UN_H_ */

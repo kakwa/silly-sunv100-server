@@ -1,5 +1,5 @@
-/*	$NetBSD: nd6_rtr.c,v 1.149 2020/06/12 11:04:45 roy Exp $	*/
-/*	$KAME: nd6_rtr.c,v 1.95 2001/02/07 08:09:47 itojun Exp $	*/
+/*	$OpenBSD: nd6_rtr.c,v 1.176 2025/07/08 00:47:41 jsg Exp $	*/
+/*	$KAME: nd6_rtr.c,v 1.97 2001/02/07 11:09:13 itojun Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -30,28 +30,28 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: nd6_rtr.c,v 1.149 2020/06/12 11:04:45 roy Exp $");
-
-#ifdef _KERNEL_OPT
-#include "opt_net_mpsafe.h"
-#endif
-
+#include <sys/param.h>
+#include <sys/systm.h>
 #include <sys/mbuf.h>
-#include <sys/syslog.h>
+#include <sys/socket.h>
+#include <sys/errno.h>
 
 #include <net/if.h>
+#include <net/if_var.h>
+#include <net/route.h>
+#include <net/rtable.h>
 
 #include <netinet/in.h>
-#include <netinet6/in6_var.h>
 #include <netinet/ip6.h>
+#include <netinet6/ip6_var.h>
 #include <netinet6/nd6.h>
 #include <netinet/icmp6.h>
-#include <netinet6/icmp6_private.h>
+
+int rt6_deleteroute(struct rtentry *, void *, unsigned int);
 
 /*
- * Cache the source link layer address of Router Advertisement
- * and Solicition messages.
+ * Process Source Link-layer Address Options from
+ * Router Solicitation / Advertisement Messages.
  */
 void
 nd6_rtr_cache(struct mbuf *m, int off, int icmp6len, int icmp6_type)
@@ -63,21 +63,15 @@ nd6_rtr_cache(struct mbuf *m, int off, int icmp6len, int icmp6_type)
 	struct in6_addr saddr6 = ip6->ip6_src;
 	char *lladdr = NULL;
 	int lladdrlen = 0;
-	union nd_opts ndopts;
-	struct psref psref;
-	char ip6bufs[INET6_ADDRSTRLEN], ip6bufd[INET6_ADDRSTRLEN];
+	int i_am_router = (atomic_load_int(&ip6_forwarding) != 0);
+	struct nd_opts ndopts;
 
-	ifp = m_get_rcvif_psref(m, &psref);
-	if (ifp == NULL)
-		goto freeit;
+	KASSERT(icmp6_type == ND_ROUTER_SOLICIT || icmp6_type ==
+	    ND_ROUTER_ADVERT);
 
 	/* Sanity checks */
-	if (ip6->ip6_hlim != 255) {
-		nd6log(LOG_ERR, "invalid hlim (%d) from %s to %s on %s\n",
-		    ip6->ip6_hlim, IN6_PRINT(ip6bufs, &ip6->ip6_src),
-		    IN6_PRINT(ip6bufd, &ip6->ip6_dst), if_name(ifp));
+	if (ip6->ip6_hlim != 255)
 		goto bad;
-	}
 
 	switch (icmp6_type) {
 	case ND_ROUTER_SOLICIT:
@@ -88,41 +82,34 @@ nd6_rtr_cache(struct mbuf *m, int off, int icmp6len, int icmp6_type)
 		if (IN6_IS_ADDR_UNSPECIFIED(&saddr6))
 			goto freeit;
 
-		IP6_EXTHDR_GET(nd_rs, struct nd_router_solicit *, m, off,
-		    icmp6len);
+		nd_rs = ip6_exthdr_get(&m, off, icmp6len);
 		if (nd_rs == NULL) {
-			ICMP6_STATINC(ICMP6_STAT_TOOSHORT);
-			m_put_rcvif_psref(ifp, &psref);
+			icmp6stat_inc(icp6s_tooshort);
 			return;
 		}
 
 		icmp6len -= sizeof(*nd_rs);
-		nd6_option_init(nd_rs + 1, icmp6len, &ndopts);
+		if (nd6_options(nd_rs + 1, icmp6len, &ndopts) < 0) {
+			/* nd6_options have incremented stats */
+			goto freeit;
+		}
 		break;
 	case ND_ROUTER_ADVERT:
-		if (!IN6_IS_ADDR_LINKLOCAL(&saddr6)) {
-			nd6log(LOG_ERR, "src %s is not link-local\n",
-			    IN6_PRINT(ip6bufs, &saddr6));
+		if (!IN6_IS_ADDR_LINKLOCAL(&saddr6))
 			goto bad;
-		}
 
-		IP6_EXTHDR_GET(nd_ra, struct nd_router_advert *, m, off,
-		    icmp6len);
+		nd_ra = ip6_exthdr_get(&m, off, icmp6len);
 		if (nd_ra == NULL) {
-			ICMP6_STATINC(ICMP6_STAT_TOOSHORT);
-			m_put_rcvif_psref(ifp, &psref);
+			icmp6stat_inc(icp6s_tooshort);
 			return;
 		}
 
 		icmp6len -= sizeof(*nd_ra);
-		nd6_option_init(nd_ra + 1, icmp6len, &ndopts);
+		if (nd6_options(nd_ra + 1, icmp6len, &ndopts) < 0) {
+			/* nd6_options have incremented stats */
+			goto freeit;
+		}
 		break;
-	}
-
-	if (nd6_options(&ndopts) < 0) {
-		nd6log(LOG_INFO, "invalid ND option, ignored\n");
-		/* nd6_options have incremented stats */
-		goto freeit;
 	}
 
 	if (ndopts.nd_opts_src_lladdr) {
@@ -130,26 +117,100 @@ nd6_rtr_cache(struct mbuf *m, int off, int icmp6len, int icmp6_type)
 		lladdrlen = ndopts.nd_opts_src_lladdr->nd_opt_len << 3;
 	}
 
+	ifp = if_get(m->m_pkthdr.ph_ifidx);
+	if (ifp == NULL)
+		goto freeit;
+
 	if (lladdr && ((ifp->if_addrlen + 2 + 7) & ~7) != lladdrlen) {
-		nd6log(LOG_INFO, "lladdrlen mismatch for %s "
-		    "(if %d, %s packet %d)\n",
-		    IN6_PRINT(ip6bufs, &saddr6),
-		    ifp->if_addrlen,
-		    icmp6_type == ND_ROUTER_SOLICIT ? "RS" : "RA",
-		    lladdrlen - 2);
+		if_put(ifp);
 		goto bad;
 	}
 
-	nd6_cache_lladdr(ifp, &saddr6, lladdr, lladdrlen, icmp6_type, 0);
+	nd6_cache_lladdr(ifp, &saddr6, lladdr, lladdrlen, icmp6_type, 0,
+	    i_am_router);
+	if_put(ifp);
 
-freeit:
-	m_put_rcvif_psref(ifp, &psref);
+ freeit:
 	m_freem(m);
 	return;
 
-bad:
-	ICMP6_STATINC(icmp6_type == ND_ROUTER_SOLICIT ?
-	    ICMP6_STAT_BADRS : ICMP6_STAT_BADRA);
-	m_put_rcvif_psref(ifp, &psref);
+ bad:
+	icmp6stat_inc(icmp6_type == ND_ROUTER_SOLICIT ? icp6s_badrs :
+	    icp6s_badra);
 	m_freem(m);
+}
+
+/*
+ * Delete all the routing table entries that use the specified gateway.
+ * XXX: this function causes search through all entries of routing table, so
+ * it shouldn't be called when acting as a router.
+ * The gateway must already contain KAME's hack for link-local scope.
+ */
+int
+rt6_flush(struct in6_addr *gateway, struct ifnet *ifp)
+{
+	struct rt_addrinfo info;
+	struct sockaddr_in6 sa_mask;
+	struct rtentry *rt = NULL;
+	int error;
+
+	NET_ASSERT_LOCKED();
+
+	/* We'll care only link-local addresses */
+	if (!IN6_IS_ADDR_LINKLOCAL(gateway))
+		return (0);
+
+	KASSERT(gateway->s6_addr16[1] != 0);
+
+	do {
+		error = rtable_walk(ifp->if_rdomain, AF_INET6, &rt,
+		    rt6_deleteroute, gateway);
+		if (rt != NULL && error == EEXIST) {
+			memset(&info, 0, sizeof(info));
+			info.rti_flags =  rt->rt_flags;
+			info.rti_info[RTAX_DST] = rt_key(rt);
+			info.rti_info[RTAX_GATEWAY] = rt->rt_gateway;
+			info.rti_info[RTAX_NETMASK] = rt_plen2mask(rt,
+			    &sa_mask);
+			KERNEL_LOCK();
+			error = rtrequest_delete(&info, RTP_ANY, ifp, NULL,
+			    ifp->if_rdomain);
+			KERNEL_UNLOCK();
+			if (error == 0)
+				error = EAGAIN;
+		}
+		rtfree(rt);
+		rt = NULL;
+	} while (error == EAGAIN);
+
+	return (error);
+}
+
+int
+rt6_deleteroute(struct rtentry *rt, void *arg, unsigned int id)
+{
+	struct in6_addr *gate = (struct in6_addr *)arg;
+
+	if (rt->rt_gateway == NULL || rt->rt_gateway->sa_family != AF_INET6)
+		return (0);
+
+	if (!IN6_ARE_ADDR_EQUAL(gate, &satosin6(rt->rt_gateway)->sin6_addr))
+		return (0);
+
+	/*
+	 * Do not delete a static route.
+	 * XXX: this seems to be a bit ad-hoc. Should we consider the
+	 * 'cloned' bit instead?
+	 */
+	if ((rt->rt_flags & RTF_STATIC) != 0)
+		return (0);
+
+	/*
+	 * We delete only host route. This means, in particular, we don't
+	 * delete default route.
+	 */
+	if ((rt->rt_flags & RTF_HOST) == 0)
+		return (0);
+
+	return (EEXIST);
 }

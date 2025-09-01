@@ -1,4 +1,4 @@
-/* $NetBSD: pipe.h,v 1.42 2023/11/02 10:31:55 martin Exp $ */
+/*	$OpenBSD: pipe.h,v 1.29 2022/07/09 12:48:21 visa Exp $	*/
 
 /*
  * Copyright (c) 1996 John S. Dyson
@@ -19,44 +19,27 @@
  *    is allowed if this notation is included.
  * 5. Modifications may be freely made to this file if the above conditions
  *    are met.
- *
- * $FreeBSD: src/sys/sys/pipe.h,v 1.18 2002/02/27 07:35:59 alfred Exp $
  */
 
 #ifndef _SYS_PIPE_H_
-#define	_SYS_PIPE_H_
+#define _SYS_PIPE_H_
 
-#include <sys/selinfo.h>		/* for struct selinfo */
+#ifndef _KERNEL
 #include <sys/time.h>			/* for struct timespec */
+#endif /* _KERNEL */
 
-#include <uvm/uvm_extern.h>
+#include <sys/event.h>			/* for struct klist */
+#include <sys/sigio.h>			/* for struct sigio_ref */
 
 /*
  * Pipe buffer size, keep moderate in value, pipes take kva space.
  */
 #ifndef PIPE_SIZE
-#define	PIPE_SIZE	16384
+#define PIPE_SIZE	16384
 #endif
 
 #ifndef BIG_PIPE_SIZE
-#define	BIG_PIPE_SIZE	(4*PIPE_SIZE)
-#endif
-
-/*
- * Maximum size of transfer for direct write transfer. If the amount
- * of data in buffer is larger, it would be transferred in chunks of this
- * size.
- */
-#ifndef PIPE_DIRECT_CHUNK
-#define	PIPE_DIRECT_CHUNK	(1*1024*1024)
-#endif
-
-/*
- * PIPE_MINDIRECT MUST be smaller than PIPE_SIZE and MUST be bigger
- * than PIPE_BUF.
- */
-#ifndef PIPE_MINDIRECT
-#define	PIPE_MINDIRECT	8192
+#define BIG_PIPE_SIZE	(64*1024)
 #endif
 
 /*
@@ -65,57 +48,50 @@
  * Buffered write is active when the buffer.cnt field is set.
  */
 struct pipebuf {
-	size_t	cnt;		/* number of chars currently in buffer */
+	u_int	cnt;		/* number of chars currently in buffer */
 	u_int	in;		/* in pointer */
 	u_int	out;		/* out pointer */
-	size_t	size;		/* size of buffer */
-	void *	buffer;		/* kva of buffer */
+	u_int	size;		/* size of buffer */
+	caddr_t	buffer;		/* kva of buffer */
 };
 
 /*
  * Bits in pipe_state.
  */
-#define	PIPE_ASYNC	0x001	/* Async I/O */
-#define	PIPE_EOF	0x010	/* Pipe is in EOF condition */
-#define	PIPE_SIGNALR	0x020	/* Do selwakeup() on read(2) */
-#define	PIPE_LOCKFL	0x100	/* Process has exclusive access to
-				   pointers/data. */
-/*	unused  	0x200	*/
-#define	PIPE_RESTART	0x400	/* Return ERESTART to blocked syscalls */
+#define PIPE_ASYNC	0x004	/* Async? I/O. */
+#define PIPE_WANTR	0x008	/* Reader wants some characters. */
+#define PIPE_WANTW	0x010	/* Writer wants space to put characters. */
+#define PIPE_WANTD	0x020	/* Pipe is wanted to be run-down. */
+#define PIPE_EOF	0x080	/* Pipe is in EOF condition. */
+#define PIPE_LOCK	0x100	/* Thread has exclusive I/O access. */
+#define PIPE_LWANT	0x200	/* Thread wants exclusive I/O access. */
+
+struct pipe_pair;
 
 /*
  * Per-pipe data structure.
  * Two of these are linked together to produce bi-directional pipes.
+ *
+ * Locking:
+ *	I	immutable after creation
+ *	S	sigio_lock
+ *	p	pipe_lock
  */
 struct pipe {
-	kmutex_t *pipe_lock;		/* pipe mutex */
-	kcondvar_t pipe_rcv;		/* cv for readers */
-	kcondvar_t pipe_wcv;		/* cv for writers */
-	kcondvar_t pipe_draincv;	/* cv for close */
-	kcondvar_t pipe_lkcv;		/* locking */
-	struct	pipebuf pipe_buffer;	/* data storage */
-	struct	selinfo pipe_sel;	/* for compat with select */
-	struct	timespec pipe_atime;	/* time of last access */
-	struct	timespec pipe_mtime;	/* time of last modify */
-	struct	timespec pipe_btime;	/* time of creation */
-	struct	pipe *pipe_peer;	/* link with other direction */
-	pid_t	pipe_pgid;		/* process group for sigio */
-	u_int	pipe_state;		/* pipe status info */
-	int	pipe_busy;		/* busy flag, to handle rundown */
-	vaddr_t	pipe_kmem;		/* preallocated PIPE_SIZE buffer */
+	struct	rwlock *pipe_lock;
+	struct	pipebuf pipe_buffer;	/* [p] data storage */
+	struct	klist pipe_klist;	/* [p] list of knotes */
+	struct	timespec pipe_atime;	/* [p] time of last access */
+	struct	timespec pipe_mtime;	/* [p] time of last modify */
+	struct	timespec pipe_ctime;	/* [I] time of status change */
+	struct	sigio_ref pipe_sigio;	/* [S] async I/O registration */
+	struct	pipe *pipe_peer;	/* [p] link with other direction */
+	struct	pipe_pair *pipe_pair;	/* [I] pipe storage */
+	u_int	pipe_state;		/* [p] pipe status info */
+	int	pipe_busy;		/* [p] # readers/writers */
 };
 
-/*
- * KERN_PIPE subtypes
- */
-#define	KERN_PIPE_MAXKVASZ		1	/* maximum kva size (obsolete) */
-#define	KERN_PIPE_LIMITKVA		2	/* limit kva for laons (obsolete) */
-#define	KERN_PIPE_MAXBIGPIPES		3	/* maximum # of "big" pipes */
-#define	KERN_PIPE_NBIGPIPES		4	/* current number of "big" p. */
-#define	KERN_PIPE_KVASIZE		5	/* current pipe kva size */
-
 #ifdef _KERNEL
-int	sysctl_dopipe(int *, u_int, void *, size_t *, void *, size_t);
 void	pipe_init(void);
 #endif /* _KERNEL */
 

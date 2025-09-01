@@ -1,4 +1,5 @@
-/*	$NetBSD: netif_of.c,v 1.9 2011/07/30 04:18:38 jakllsch Exp $	*/
+/*	$OpenBSD: netif_of.c,v 1.9 2023/06/03 21:37:53 krw Exp $	*/
+/*	$NetBSD: netif_of.c,v 1.1 2000/08/20 14:58:39 mrg Exp $	*/
 
 /*
  * Copyright (C) 1995 Wolfgang Solfrank.
@@ -43,18 +44,16 @@
 #include <sys/socket.h>
 
 #include <net/if.h>
-#include <net/if_ether.h>
 
 #include <netinet/in.h>
-#include <netinet/in_systm.h>
+#include <netinet/if_ether.h>
 
 #include <lib/libsa/stand.h>
 #include <lib/libsa/net.h>
 #include <lib/libsa/netif.h>
 
-#include <machine/promlib.h>
-
 #include "ofdev.h"
+#include "openfirm.h"
 
 static struct netif netif_of;
 
@@ -73,31 +72,26 @@ netif_open(void *machdep_hint)
 {
 	struct of_dev *op = machdep_hint;
 	struct iodesc *io;
-	
-#ifdef	NETIF_DEBUG
-	printf("netif_open...");
-#endif
+
+	DNPRINTF(BOOT_D_OFNET, "netif_open...");
+
 	/* find a free socket */
 	io = sockets;
 	if (io->io_netif) {
-#ifdef	NETIF_DEBUG
-		printf("device busy\n");
-#endif
+		DNPRINTF(BOOT_D_OFNET, "device busy\n");
 		errno = ENFILE;
 		return -1;
 	}
-	memset(io, 0, sizeof *io);
+	bzero(io, sizeof *io);
 
 	netif_of.nif_devdata = op;
 	io->io_netif = &netif_of;
-	
+
 	/* Put our ethernet address in io->myea */
-	_prom_getprop(prom_instance_to_package(op->handle),
+	OF_getprop(OF_instance_to_package(op->handle),
 		   "mac-address", io->myea, sizeof io->myea);
 
-#ifdef	NETIF_DEBUG
-	printf("OK\n");
-#endif
+	DNPRINTF(BOOT_D_OFNET, "OK\n");
 	return 0;
 }
 
@@ -107,13 +101,10 @@ netif_close(int fd)
 	struct iodesc *io;
 	struct netif *ni;
 
-#ifdef	NETIF_DEBUG
-	printf("netif_close(%x)...", fd);
-#endif
+	DNPRINTF(BOOT_D_OFNET, "netif_close(%x)...", fd);
+
 	if (fd != 0) {
-#ifdef	NETIF_DEBUG
-		printf("EBADF\n");
-#endif
+		DNPRINTF(BOOT_D_OFNET, "EBADF\n");
 		errno = EBADF;
 		return -1;
 	}
@@ -124,9 +115,8 @@ netif_close(int fd)
 		ni->nif_devdata = NULL;
 		io->io_netif = NULL;
 	}
-#ifdef	NETIF_DEBUG
-	printf("OK\n");
-#endif
+
+	DNPRINTF(BOOT_D_OFNET, "OK\n");
 	return 0;
 }
 
@@ -141,37 +131,25 @@ netif_put(struct iodesc *desc, void *pkt, size_t len)
 	ssize_t rv;
 	size_t sendlen;
 
-	op = ((struct netif *)desc->io_netif)->nif_devdata;
+	op = desc->io_netif->nif_devdata;
 
-#ifdef	NETIF_DEBUG
-	{
-		struct ether_header *eh;
-
-		printf("netif_put: desc=%p pkt=%p len=%zu\n",
-		       desc, pkt, len);
-		eh = pkt;
-		printf("dst: %s ", ether_sprintf(eh->ether_dhost));
-		printf("src: %s ", ether_sprintf(eh->ether_shost));
-		printf("type: 0x%x\n", eh->ether_type & 0xFFFF);
-	}
-#endif
+	DNPRINTF(BOOT_D_OFNET, "netif_put: desc=0x%x pkt=0x%x len=%d\n",
+	    desc, pkt, len);
+	DNPRINTF(BOOT_D_OFNET, "dst: %s, src: %s, type: 0x%x\n",
+	    ether_sprintf(((struct ether_header *)pkt)->ether_dhost),
+	    ether_sprintf(((struct ether_header *)pkt)->ether_shost),
+	    ((struct ether_header *)pkt)->ether_type & 0xFFFF);
 
 	sendlen = len;
 	if (sendlen < 60) {
 		sendlen = 60;
-#ifdef	NETIF_DEBUG
-		printf("netif_put: length padded to %zu\n", sendlen);
-#endif
+		DNPRINTF(BOOT_D_OFNET, "netif_put: length padded to %d\n",
+		    sendlen);
 	}
 
-	rv = prom_write(op->handle, pkt, sendlen);
+	rv = OF_write(op->handle, pkt, sendlen);
 
-#ifdef	NETIF_DEBUG
-	printf("netif_put: xmit returned %zd\n", rv);
-#endif
-
-	if (rv > len)
-		rv = len;
+	DNPRINTF(BOOT_D_OFNET, "netif_put: xmit returned %d\n", rv);
 
 	return rv;
 }
@@ -181,43 +159,34 @@ netif_put(struct iodesc *desc, void *pkt, size_t len)
  * Return the total length received (or -1 on error).
  */
 ssize_t
-netif_get(struct iodesc *desc, void *pkt, size_t maxlen, saseconds_t timo)
+netif_get(struct iodesc *desc, void *pkt, size_t maxlen, time_t timo)
 {
 	struct of_dev *op;
 	int tick0, tmo_ms;
 	int len;
 
-	op = ((struct netif *)desc->io_netif)->nif_devdata;
+	op = desc->io_netif->nif_devdata;
 
-#ifdef	NETIF_DEBUG
-	printf("netif_get: pkt=%p, maxlen=%zu, tmo=%d\n",
-	       pkt, maxlen, timo);
-#endif
+	DNPRINTF(BOOT_D_OFNET, "netif_get: pkt=0x%x, maxlen=%d, tmo=%d\n",
+	    pkt, maxlen, timo);
 
 	tmo_ms = timo * 1000;
-	tick0 = prom_ticks();
+	tick0 = OF_milliseconds();
 
 	do {
-		len = prom_read(op->handle, pkt, maxlen);
+		len = OF_read(op->handle, pkt, maxlen);
 	} while ((len == -2 || len == 0) &&
-		 (prom_ticks() - tick0 < tmo_ms));
+		 (OF_milliseconds() - tick0 < tmo_ms));
 
-#ifdef	NETIF_DEBUG
-	printf("netif_get: received len=%d\n", len);
-#endif
+	DNPRINTF(BOOT_D_OFNET, "netif_get: received len=%d\n", len);
 
 	if (len < 12)
 		return -1;
 
-#ifdef	NETIF_DEBUG
-	{
-		struct ether_header *eh = pkt;
-
-		printf("dst: %s ", ether_sprintf(eh->ether_dhost));
-		printf("src: %s ", ether_sprintf(eh->ether_shost));
-		printf("type: 0x%x\n", eh->ether_type & 0xFFFF);
-	}
-#endif
+	DNPRINTF(BOOT_D_OFNET, "dst: %s, src: %s, type: 0x%x\n",
+	    ether_sprintf(((struct ether_header *)pkt)->ether_dhost),
+	    ether_sprintf(((struct ether_header *)pkt)->ether_shost),
+	    ((struct ether_header *)pkt)->ether_type & 0xFFFF);
 
 	return len;
 }
@@ -225,9 +194,8 @@ netif_get(struct iodesc *desc, void *pkt, size_t maxlen, saseconds_t timo)
 /*
  * Shouldn't really be here, but is used solely for networking, so...
  */
-satime_t
+time_t
 getsecs(void)
 {
-
-	return prom_ticks() / 1000;
+	return OF_milliseconds() / 1000;
 }

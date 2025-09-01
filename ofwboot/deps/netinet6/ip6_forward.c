@@ -1,5 +1,5 @@
-/*	$NetBSD: ip6_forward.c,v 1.103 2024/06/29 13:00:44 riastradh Exp $	*/
-/*	$KAME: ip6_forward.c,v 1.109 2002/09/11 08:10:17 sakane Exp $	*/
+/*	$OpenBSD: ip6_forward.c,v 1.128 2025/07/23 18:58:38 mvs Exp $	*/
+/*	$KAME: ip6_forward.c,v 1.75 2001/06/29 12:42:13 jinmei Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -30,79 +30,34 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ip6_forward.c,v 1.103 2024/06/29 13:00:44 riastradh Exp $");
-
-#ifdef _KERNEL_OPT
-#include "opt_gateway.h"
-#include "opt_ipsec.h"
-#endif
+#include "pf.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/mbuf.h>
+#include <sys/socket.h>
 #include <sys/errno.h>
 #include <sys/time.h>
-#include <sys/kernel.h>
 #include <sys/syslog.h>
-#include <sys/percpu.h>
 
 #include <net/if.h>
+#include <net/if_var.h>
 #include <net/route.h>
-#include <net/pfil.h>
-
-#include <netinet/in.h>
-#include <netinet/in_var.h>
-#include <netinet/ip_var.h>
-#include <netinet/ip6.h>
-#include <netinet6/ip6_var.h>
-#include <netinet6/ip6_private.h>
-#include <netinet6/scope6_var.h>
-#include <netinet/icmp6.h>
-#include <netinet6/nd6.h>
-
-#ifdef IPSEC
-#include <netipsec/ipsec.h>
-#include <netipsec/ipsec6.h>
-#include <netipsec/key.h>
+#if NPF > 0
+#include <net/pfvar.h>
 #endif
 
-extern percpu_t *ip6_forward_rt_percpu;
-
-extern pfil_head_t *inet6_pfil_hook;	/* XXX */
-
-static void __printflike(4, 5)
-ip6_cantforward(const struct ip6_hdr *ip6, const struct ifnet *srcifp,
-    const struct ifnet *dstifp, const char *fmt, ...)
-{
-	char sbuf[INET6_ADDRSTRLEN], dbuf[INET6_ADDRSTRLEN];
-	char reason[256];
-	va_list ap;
-	net_stat_ref_t ip6s;
-
-	/* update statistics */
-	ip6s = IP6_STAT_GETREF();
-	_NET_STATINC_REF(ip6s, IP6_STAT_CANTFORWARD);
-	if (dstifp)
-		_NET_STATINC_REF(ip6s, IP6_STAT_BADSCOPE);
-	IP6_STAT_PUTREF();
-
-	if (dstifp)
-		in6_ifstat_inc(dstifp, ifs6_in_discard);
-
-	if (ip6_log_time + ip6_log_interval >= time_uptime)
-		return;
-	ip6_log_time = time_uptime;
-
-	va_start(ap, fmt);
-	vsnprintf(reason, sizeof(reason), fmt, ap);
-	va_end(ap);
-
-	log(LOG_DEBUG, "Cannot forward from %s@%s to %s@%s nxt %d (%s)\n",
-	    IN6_PRINT(sbuf, &ip6->ip6_src), srcifp ? if_name(srcifp) : "?",
-	    IN6_PRINT(dbuf, &ip6->ip6_dst), dstifp ? if_name(dstifp) : "?",
-	    ip6->ip6_nxt, reason);
-}
+#include <netinet/in.h>
+#include <netinet6/in6_var.h>
+#include <netinet/ip6.h>
+#include <netinet6/ip6_var.h>
+#include <netinet/icmp6.h>
+#include <netinet6/nd6.h>
+#include <netinet/udp.h>
+#include <netinet/tcp.h>
+#ifdef IPSEC
+#include <netinet/ip_ipsp.h>
+#endif
 
 /*
  * Forward a packet.  If some error occurs return the sender
@@ -111,52 +66,68 @@ ip6_cantforward(const struct ip6_hdr *ip6, const struct ifnet *srcifp,
  * of codes and types.
  *
  * If not forwarding, just drop the packet.  This could be confusing
- * if ipforwarding was zero but some routing protocol was advancing
+ * if ip6_forwarding was zero but some routing protocol was advancing
  * us as a gateway to somewhere.  However, we must let the routing
  * protocol deal with that.
+ *
  */
+
 void
-ip6_forward(struct mbuf *m, int srcrt, struct ifnet *rcvif)
+ip6_forward(struct mbuf *m, struct route *ro, int flags)
 {
 	struct ip6_hdr *ip6 = mtod(m, struct ip6_hdr *);
-	const struct sockaddr_in6 *dst;
-	struct rtentry *rt = NULL;
-	int error = 0, type = 0, code = 0;
-	struct mbuf *mcopy = NULL;
-	struct ifnet *origifp;	/* maybe unnecessary */
-	uint32_t inzone, outzone;
-	struct in6_addr src_in6, dst_in6;
-	struct route *ro = NULL;
+	struct route iproute;
+	struct rtentry *rt;
+	struct sockaddr *dst;
+	struct ifnet *ifp = NULL;
+	u_int rtableid = m->m_pkthdr.ph_rtableid;
+	u_int ifidx = m->m_pkthdr.ph_ifidx;
+	u_int8_t loopcnt = m->m_pkthdr.ph_loopcnt;
+	u_int icmp_len;
+	char icmp_buf[MHLEN];
+	CTASSERT(sizeof(struct ip6_hdr) + sizeof(struct tcphdr) +
+	    MAX_TCPOPTLEN <= sizeof(icmp_buf));
+	u_short mflags, pfflags;
+	struct mbuf *mcopy;
+	int error = 0, type = 0, code = 0, destmtu = 0;
+	u_int orig_rtableid;
 #ifdef IPSEC
-	int needipsec = 0;
-	struct secpolicy *sp = NULL;
-#endif
-
-	/*
-	 * Clear any in-bound checksum flags for this packet.
-	 */
-	m->m_pkthdr.csum_flags = 0;
+	struct tdb *tdb = NULL;
+#endif /* IPSEC */
+	char src6[INET6_ADDRSTRLEN], dst6[INET6_ADDRSTRLEN];
 
 	/*
 	 * Do not forward packets to multicast destination (should be handled
-	 * by ip6_mforward()). Do not forward packets with unspecified source.
-	 * It was discussed in July 2000, on ipngwg mailing list.
+	 * by ip6_mforward().
+	 * Do not forward packets with unspecified source.  It was discussed
+	 * in July 2000, on ipngwg mailing list.
 	 */
 	if ((m->m_flags & (M_BCAST|M_MCAST)) != 0 ||
 	    IN6_IS_ADDR_MULTICAST(&ip6->ip6_dst) ||
 	    IN6_IS_ADDR_UNSPECIFIED(&ip6->ip6_src)) {
-		ip6_cantforward(ip6, rcvif, NULL,
-		    ((m->m_flags & (M_BCAST|M_MCAST)) != 0) ? "bcast/mcast" :
-		    IN6_IS_ADDR_MULTICAST(&ip6->ip6_dst) ? "mcast/dst" :
-		    "unspec/src");
-		goto drop;
+		time_t uptime;
+
+		ip6stat_inc(ip6s_cantforward);
+		uptime = getuptime();
+
+		if (ip6_log_time + atomic_load_int(&ip6_log_interval) <
+		    uptime) {
+			ip6_log_time = uptime;
+			inet_ntop(AF_INET6, &ip6->ip6_src, src6, sizeof(src6));
+			inet_ntop(AF_INET6, &ip6->ip6_dst, dst6, sizeof(dst6));
+			log(LOG_DEBUG,
+			    "cannot forward "
+			    "from %s to %s nxt %d received on interface %u\n",
+			    src6, dst6, ip6->ip6_nxt, ifidx);
+		}
+		m_freem(m);
+		goto done;
 	}
 
 	if (ip6->ip6_hlim <= IPV6_HLIMDEC) {
-		/* XXX in6_ifstat_inc(rt->rt_ifp, ifs6_in_discard) */
 		icmp6_error(m, ICMP6_TIME_EXCEEDED,
 				ICMP6_TIME_EXCEED_TRANSIT, 0);
-		goto out;
+		goto done;
 	}
 	ip6->ip6_hlim -= IPV6_HLIMDEC;
 
@@ -165,138 +136,131 @@ ip6_forward(struct mbuf *m, int srcrt, struct ifnet *rcvif)
 	 * size of IPv6 + ICMPv6 headers) bytes of the packet in case
 	 * we need to generate an ICMP6 message to the src.
 	 * Thanks to M_EXT, in most cases copy will not occur.
+	 * For small packets copy original onto stack instead of mbuf.
+	 *
+	 * For final protocol header like TCP or UDP, full header chain in
+	 * ICMP6 packet is not necessary.  In this case only copy small
+	 * part of original packet and save it on stack instead of mbuf.
+	 * Although this violates RFC 4443 2.4. (c), it avoids additional
+	 * mbuf allocations.  Also pf nat and rdr do not affect the shared
+	 * mbuf cluster.
 	 *
 	 * It is important to save it before IPsec processing as IPsec
 	 * processing may modify the mbuf.
 	 */
-	mcopy = m_copym(m, 0, imin(m->m_pkthdr.len, ICMPV6_PLD_MAXLEN),
-	    M_DONTWAIT);
+	switch (ip6->ip6_nxt) {
+	case IPPROTO_TCP:
+		icmp_len = sizeof(struct ip6_hdr) + sizeof(struct tcphdr) +
+		    MAX_TCPOPTLEN;
+		break;
+	case IPPROTO_UDP:
+		icmp_len = sizeof(struct ip6_hdr) + sizeof(struct udphdr);
+		break;
+	case IPPROTO_ESP:
+		icmp_len = sizeof(struct ip6_hdr) + 2 * sizeof(u_int32_t);
+		break;
+	default:
+		icmp_len = ICMPV6_PLD_MAXLEN;
+		break;
+	}
+	if (icmp_len > m->m_pkthdr.len)
+		icmp_len = m->m_pkthdr.len;
+	if (icmp_len <= sizeof(icmp_buf)) {
+		mflags = m->m_flags;
+		pfflags = m->m_pkthdr.pf.flags;
+		m_copydata(m, 0, icmp_len, icmp_buf);
+		mcopy = NULL;
+	} else {
+		mcopy = m_copym(m, 0, icmp_len, M_NOWAIT);
+		icmp_len = 0;
+	}
+
+	orig_rtableid = m->m_pkthdr.ph_rtableid;
+#if NPF > 0
+reroute:
+#endif
 
 #ifdef IPSEC
-	if (ipsec_used) {
-		/* Check the security policy (SP) for the packet */
-		sp = ipsec6_check_policy(m, NULL, 0, &needipsec, &error);
-		if (error != 0) {
+	if (ipsec_in_use) {
+		error = ip6_output_ipsec_lookup(m, NULL, &tdb);
+		if (error) {
 			/*
-			 * Hack: -EINVAL is used to signal that a packet
-			 * should be silently discarded.  This is typically
-			 * because we asked key management for an SA and
-			 * it was delayed (e.g. kicked up to IKE).
+			 * -EINVAL is used to indicate that the packet should
+			 * be silently dropped, typically because we've asked
+			 * key management for an SA.
 			 */
-			if (error == -EINVAL)
+			if (error == -EINVAL) /* Should silently drop packet */
 				error = 0;
+
 			m_freem(m);
-			IP6_STATINC(IP6_STAT_IPSECDROP_OUT);
 			goto freecopy;
 		}
 	}
-#endif
+#endif /* IPSEC */
 
-	ro = rtcache_percpu_getref(ip6_forward_rt_percpu);
-	if (srcrt) {
-		union {
-			struct sockaddr		dst;
-			struct sockaddr_in6	dst6;
-		} u;
-
-		sockaddr_in6_init(&u.dst6, &ip6->ip6_dst, 0, 0, 0);
-		rt = rtcache_lookup(ro, &u.dst);
-		if (rt == NULL) {
-			IP6_STATINC(IP6_STAT_NOROUTE);
-			/* XXX in6_ifstat_inc(rt->rt_ifp, ifs6_in_noroute) */
-			if (mcopy) {
-				icmp6_error(mcopy, ICMP6_DST_UNREACH,
-					    ICMP6_DST_UNREACH_NOROUTE, 0);
-			}
-			goto drop;
-		}
-	} else if ((rt = rtcache_validate(ro)) == NULL &&
-	           (rt = rtcache_update(ro, 1)) == NULL) {
-		/*
-		 * rtcache_getdst(ip6_forward_rt)->sin6_addr was equal to
-		 * ip6->ip6_dst
-		 */
-		IP6_STATINC(IP6_STAT_NOROUTE);
-		/* XXX in6_ifstat_inc(rt->rt_ifp, ifs6_in_noroute) */
-		if (mcopy) {
-			icmp6_error(mcopy, ICMP6_DST_UNREACH,
-			    ICMP6_DST_UNREACH_NOROUTE, 0);
-		}
-		goto drop;
+	if (ro == NULL) {
+		ro = &iproute;
+		ro->ro_rt = NULL;
 	}
-	dst = satocsin6(rtcache_getdst(ro));
+	rt = route6_mpath(ro, &ip6->ip6_dst, &ip6->ip6_src,
+	    m->m_pkthdr.ph_rtableid);
+	if (rt == NULL) {
+		ip6stat_inc(ip6s_noroute);
+		type = ICMP6_DST_UNREACH;
+		code = ICMP6_DST_UNREACH_NOROUTE;
+		m_freem(m);
+		goto icmperror;
+	}
+	dst = &ro->ro_dstsa;
 
 	/*
-	 * Source scope check: if a packet can't be delivered to its
-	 * destination for the reason that the destination is beyond the scope
-	 * of the source address, discard the packet and return an icmp6
-	 * destination unreachable error with Code 2 (beyond scope of source
-	 * address).  We use a local copy of ip6_src, since in6_setscope()
-	 * will possibly modify its first argument.
-	 * [draft-ietf-ipngwg-icmp-v3-07, Section 3.1]
+	 * Scope check: if a packet can't be delivered to its destination
+	 * for the reason that the destination is beyond the scope of the
+	 * source address, discard the packet and return an icmp6 destination
+	 * unreachable error with Code 2 (beyond scope of source address).
+	 * [draft-ietf-ipngwg-icmp-v3-00.txt, Section 3.1]
 	 */
-	src_in6 = ip6->ip6_src;
-	inzone = outzone = ~0;
-	if (in6_setscope(&src_in6, rt->rt_ifp, &outzone) != 0 ||
-	    in6_setscope(&src_in6, rcvif, &inzone) != 0 ||
-	    inzone != outzone) {
-		ip6_cantforward(ip6, rcvif, rt->rt_ifp,
-		    "src[%s] inzone %d outzone %d",
-		    in6_getscopename(&ip6->ip6_src), inzone, outzone);
-		if (mcopy)
-			icmp6_error(mcopy, ICMP6_DST_UNREACH,
-				    ICMP6_DST_UNREACH_BEYONDSCOPE, 0);
-		goto drop;
+	if (in6_addr2scopeid(ifidx, &ip6->ip6_src) !=
+	    in6_addr2scopeid(rt->rt_ifidx, &ip6->ip6_src)) {
+		time_t uptime;
+
+		ip6stat_inc(ip6s_cantforward);
+		ip6stat_inc(ip6s_badscope);
+		uptime = getuptime();
+
+		if (ip6_log_time + atomic_load_int(&ip6_log_interval) <
+		    uptime) {
+			ip6_log_time = uptime;
+			inet_ntop(AF_INET6, &ip6->ip6_src, src6, sizeof(src6));
+			inet_ntop(AF_INET6, &ip6->ip6_dst, dst6, sizeof(dst6));
+			log(LOG_DEBUG,
+			    "cannot forward "
+			    "src %s, dst %s, nxt %d, rcvif %u, outif %u\n",
+			    src6, dst6, ip6->ip6_nxt, ifidx, rt->rt_ifidx);
+		}
+		type = ICMP6_DST_UNREACH;
+		code = ICMP6_DST_UNREACH_BEYONDSCOPE;
+		m_freem(m);
+		goto icmperror;
 	}
 
 #ifdef IPSEC
 	/*
-	 * If we need to encapsulate the packet, do it here.
-	 * ipsec6_process_packet will send the packet using ip6_output.
+	 * Check if the packet needs encapsulation.
+	 * ipsp_process_packet will never come back to here.
 	 */
-	if (needipsec) {
-		int s = splsoftnet();
-		error = ipsec6_process_packet(m, sp->req, 0);
-		splx(s);
-		/* m is freed */
-		if (mcopy)
-			goto freecopy;
-		goto out;
+	if (tdb != NULL) {
+		/* Callee frees mbuf */
+		error = ip6_output_ipsec_send(tdb, m, ro, orig_rtableid, 0, 1);
+		rt = ro->ro_rt;
+		if (error)
+			goto senderr;
+		goto freecopy;
 	}
-#endif
-
-	/*
-	 * Destination scope check: if a packet is going to break the scope
-	 * zone of packet's destination address, discard it.  This case should
-	 * usually be prevented by appropriately-configured routing table, but
-	 * we need an explicit check because we may mistakenly forward the
-	 * packet to a different zone by (e.g.) a default route.
-	 */
-	dst_in6 = ip6->ip6_dst;
-	inzone = outzone = ~0;
-	if (in6_setscope(&dst_in6, rcvif, &inzone) != 0 ||
-	    in6_setscope(&dst_in6, rt->rt_ifp, &outzone) != 0 ||
-	    inzone != outzone) {
-		ip6_cantforward(ip6, rcvif, rt->rt_ifp,
-		    "dst[%s] inzone %d outzone %d",
-		    in6_getscopename(&ip6->ip6_dst), inzone, outzone);
-		if (mcopy)
-			icmp6_error(mcopy, ICMP6_DST_UNREACH,
-				    ICMP6_DST_UNREACH_BEYONDSCOPE, 0);
-		goto drop;
-	}
-
-	if (m->m_pkthdr.len > rt->rt_ifp->if_mtu) {
-		IP6_STATINC(IP6_STAT_TOOBIG);
-		in6_ifstat_inc(rt->rt_ifp, ifs6_in_toobig);
-		if (mcopy)
-			icmp6_error(mcopy, ICMP6_PACKET_TOO_BIG, 0,
-			    rt->rt_ifp->if_mtu);
-		goto drop;
-	}
+#endif /* IPSEC */
 
 	if (rt->rt_flags & RTF_GATEWAY)
-		dst = (struct sockaddr_in6 *)rt->rt_gateway;
+		dst = rt->rt_gateway;
 
 	/*
 	 * If we are to forward the packet using the same interface
@@ -307,11 +271,17 @@ ip6_forward(struct mbuf *m, int srcrt, struct ifnet *rcvif)
 	 * Also, don't send redirect if forwarding using a route
 	 * modified by a redirect.
 	 */
-	if (rt->rt_ifp == rcvif && !srcrt && ip6_sendredirects &&
-	    (rt->rt_flags & (RTF_DYNAMIC|RTF_MODIFIED)) == 0) {
-		if ((rt->rt_ifp->if_flags & IFF_POINTOPOINT) &&
-		    nd6_is_addr_neighbor(satocsin6(rtcache_getdst(ro)),
-		                         rt->rt_ifp)) {
+	ifp = if_get(rt->rt_ifidx);
+	if (ifp == NULL) {
+		m_freem(m);
+		goto freecopy;
+	}
+	if (rt->rt_ifidx == ifidx &&
+	    !ISSET(rt->rt_flags, RTF_DYNAMIC|RTF_MODIFIED) &&
+	    !ISSET(flags, IPV6_REDIRECT) &&
+	    atomic_load_int(&ip6_sendredirects)) {
+		if ((ifp->if_flags & IFF_POINTOPOINT) &&
+		    nd6_is_addr_neighbor(&ro->ro_dstsin6, ifp)) {
 			/*
 			 * If the incoming interface is equal to the outgoing
 			 * one, the link attached to the interface is
@@ -327,9 +297,10 @@ ip6_forward(struct mbuf *m, int srcrt, struct ifnet *rcvif)
 			 * type/code is based on suggestion by Rich Draves.
 			 * not sure if it is the best pick.
 			 */
-			icmp6_error(mcopy, ICMP6_DST_UNREACH,
-				    ICMP6_DST_UNREACH_ADDR, 0);
-			goto drop;
+			type = ICMP6_DST_UNREACH;
+			code = ICMP6_DST_UNREACH_ADDR;
+			m_freem(m);
+			goto icmperror;
 		}
 		type = ND_REDIRECT;
 	}
@@ -342,95 +313,113 @@ ip6_forward(struct mbuf *m, int srcrt, struct ifnet *rcvif)
 	 * link identifiers, we can do this stuff after making a copy for
 	 * returning an error.
 	 */
-	if ((rt->rt_ifp->if_flags & IFF_LOOPBACK) != 0) {
-		/*
-		 * See corresponding comments in ip6_output.
-		 * XXX: but is it possible that ip6_forward() sends a packet
-		 *      to a loopback interface? I don't think so, and thus
-		 *      I bark here. (jinmei@kame.net)
-		 * XXX: it is common to route invalid packets to loopback.
-		 *	also, the codepath will be visited on use of ::1 in
-		 *	rthdr. (itojun)
-		 */
-#if 1
-		if (0)
-#else
-		if ((rt->rt_flags & (RTF_BLACKHOLE|RTF_REJECT)) == 0)
-#endif
-		{
-			char ip6bufs[INET6_ADDRSTRLEN];
-			char ip6bufd[INET6_ADDRSTRLEN];
+	if (IN6_IS_SCOPE_EMBED(&ip6->ip6_src))
+		ip6->ip6_src.s6_addr16[1] = 0;
+	if (IN6_IS_SCOPE_EMBED(&ip6->ip6_dst))
+		ip6->ip6_dst.s6_addr16[1] = 0;
 
-			printf("ip6_forward: outgoing interface is loopback. "
-			       "src %s, dst %s, nxt %d, rcvif %s, outif %s\n",
-			       IN6_PRINT(ip6bufs, &ip6->ip6_src),
-			       IN6_PRINT(ip6bufd, &ip6->ip6_dst),
-			       ip6->ip6_nxt, if_name(rcvif),
-			       if_name(rt->rt_ifp));
-		}
-
-		/* we can just use rcvif in forwarding. */
-		origifp = rcvif;
-	} else {
-		origifp = rt->rt_ifp;
-	}
-
-	/*
-	 * clear embedded scope identifiers if necessary.
-	 * in6_clearscope will touch the addresses only when necessary.
-	 */
-	in6_clearscope(&ip6->ip6_src);
-	in6_clearscope(&ip6->ip6_dst);
-
-	/*
-	 * Run through list of hooks for output packets.
-	 */
-	if ((error = pfil_run_hooks(inet6_pfil_hook, &m, rt->rt_ifp,
-	    PFIL_OUT)) != 0) {
-		IP6_STATINC(IP6_STAT_PFILDROP_OUT);
+#if NPF > 0
+	if (pf_test(AF_INET6, PF_FWD, ifp, &m) != PF_PASS) {
+		m_freem(m);
 		goto senderr;
 	}
-	if (m == NULL) {
-		IP6_STATINC(IP6_STAT_PFILDROP_OUT);
-		goto freecopy;
-	}
+	if (m == NULL)
+		goto senderr;
 	ip6 = mtod(m, struct ip6_hdr *);
-
-	error = ip6_if_output(rt->rt_ifp, origifp, m, dst, rt);
-	if (error) {
-		in6_ifstat_inc(rt->rt_ifp, ifs6_out_discard);
-		IP6_STATINC(IP6_STAT_CANTFORWARD);
-	} else {
-		IP6_STATINC(IP6_STAT_FORWARD);
-		in6_ifstat_inc(rt->rt_ifp, ifs6_out_forward);
-		if (type)
-			IP6_STATINC(IP6_STAT_REDIRECTSENT);
-		else {
-#ifdef GATEWAY
-			/* Need to release rt here */
-			rtcache_unref(rt, ro);
-			rt = NULL;
-			if (mcopy->m_flags & M_CANFASTFWD)
-				ip6flow_create(ro, mcopy);
-#endif
-			if (mcopy)
-				goto freecopy;
-		}
+	if ((m->m_pkthdr.pf.flags & (PF_TAG_REROUTE | PF_TAG_GENERATED)) ==
+	    (PF_TAG_REROUTE | PF_TAG_GENERATED)) {
+		/* already rerun the route lookup, go on */
+		m->m_pkthdr.pf.flags &= ~(PF_TAG_GENERATED | PF_TAG_REROUTE);
+	} else if (m->m_pkthdr.pf.flags & PF_TAG_REROUTE) {
+		/* tag as generated to skip over pf_test on rerun */
+		m->m_pkthdr.pf.flags |= PF_TAG_GENERATED;
+		SET(flags, IPV6_REDIRECT);
+		if (ro == &iproute)
+			rtfree(ro->ro_rt);
+		ro = NULL;
+		if_put(ifp);
+		ifp = NULL;
+		goto reroute;
 	}
+#endif
+
+#ifdef IPSEC
+	if (ISSET(flags, IPV6_FORWARDING) &&
+	    ISSET(flags, IPV6_FORWARDING_IPSEC) &&
+	    !ISSET(m->m_pkthdr.ph_tagsset, PACKET_TAG_IPSEC_IN_DONE)) {
+		error = EHOSTUNREACH;
+		goto senderr;
+	}
+#endif
+
+	error = if_output_tso(ifp, &m, dst, rt, ifp->if_mtu);
+	if (error)
+		ip6stat_inc(ip6s_cantforward);
+	else if (m == NULL)
+		ip6stat_inc(ip6s_forward);
+	if (error || m == NULL)
+		goto senderr;
+
+	type = ICMP6_PACKET_TOO_BIG;
+	destmtu = ifp->if_mtu;
+	m_freem(m);
+	goto icmperror;
 
 senderr:
-	if (mcopy == NULL)
-		goto out;
+	if (mcopy == NULL && icmp_len == 0)
+		goto done;
+
 	switch (error) {
 	case 0:
 		if (type == ND_REDIRECT) {
-			icmp6_redirect_output(mcopy, rt);
-			goto out;
+			if (icmp_len != 0) {
+				mcopy = m_gethdr(M_DONTWAIT, MT_DATA);
+				if (mcopy == NULL)
+					goto done;
+				mcopy->m_len = mcopy->m_pkthdr.len = icmp_len;
+				mcopy->m_flags |= (mflags & M_COPYFLAGS);
+				mcopy->m_pkthdr.ph_rtableid = rtableid;
+				mcopy->m_pkthdr.ph_ifidx = ifidx;
+				mcopy->m_pkthdr.ph_loopcnt = loopcnt;
+				mcopy->m_pkthdr.pf.flags |=
+				    (pfflags & PF_TAG_GENERATED);
+				memcpy(mcopy->m_data, icmp_buf, icmp_len);
+			}
+			if (mcopy != NULL) {
+				icmp6_redirect_output(mcopy, rt);
+				ip6stat_inc(ip6s_redirectsent);
+			}
+			goto done;
 		}
 		goto freecopy;
 
 	case EMSGSIZE:
-		/* xxx MTU is constant in PPP? */
+		type = ICMP6_PACKET_TOO_BIG;
+		if (rt != NULL) {
+			u_int rtmtu;
+
+			rtmtu = atomic_load_int(&rt->rt_mtu);
+			if (rtmtu != 0) {
+				destmtu = rtmtu;
+			} else {
+				struct ifnet *destifp;
+
+				destifp = if_get(rt->rt_ifidx);
+				if (destifp != NULL)
+					destmtu = destifp->if_mtu;
+				if_put(destifp);
+			}
+		}
+		ip6stat_inc(ip6s_cantfrag);
+		if (destmtu == 0)
+			goto freecopy;
+		break;
+
+	case EACCES:
+		/*
+		 * pf(4) blocked the packet. There is no need to send an ICMP
+		 * packet back since pf(4) takes care of it.
+		 */
 		goto freecopy;
 
 	case ENOBUFS:
@@ -446,23 +435,30 @@ senderr:
 		code = ICMP6_DST_UNREACH_ADDR;
 		break;
 	}
-	icmp6_error(mcopy, type, code, 0);
-	goto out;
+ icmperror:
+	if (icmp_len != 0) {
+		mcopy = m_gethdr(M_DONTWAIT, MT_DATA);
+		if (mcopy == NULL)
+			goto done;
+		mcopy->m_len = mcopy->m_pkthdr.len = icmp_len;
+		mcopy->m_flags |= (mflags & M_COPYFLAGS);
+		mcopy->m_pkthdr.ph_rtableid = rtableid;
+		mcopy->m_pkthdr.ph_ifidx = ifidx;
+		mcopy->m_pkthdr.ph_loopcnt = loopcnt;
+		mcopy->m_pkthdr.pf.flags |= (pfflags & PF_TAG_GENERATED);
+		memcpy(mcopy->m_data, icmp_buf, icmp_len);
+	}
+	if (mcopy != NULL)
+		icmp6_error(mcopy, type, code, destmtu);
+	goto done;
 
-freecopy:
+ freecopy:
 	m_freem(mcopy);
-	goto out;
-
-drop:
-	m_freem(m);
-
-out:
+ done:
+	if (ro == &iproute)
+		rtfree(ro->ro_rt);
+	if_put(ifp);
 #ifdef IPSEC
-	if (sp != NULL)
-		KEY_SP_UNREF(&sp);
-#endif
-	rtcache_unref(rt, ro);
-	if (ro != NULL)
-		rtcache_percpu_putref(ip6_forward_rt_percpu);
-	return;
+	tdb_unref(tdb);
+#endif /* IPSEC */
 }

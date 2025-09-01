@@ -1,4 +1,5 @@
-/*	$NetBSD: ip.h,v 1.39 2022/04/17 21:24:53 andvar Exp $	*/
+/*	$OpenBSD: ip.h,v 1.20 2021/12/14 23:47:36 dtucker Exp $	*/
+/*	$NetBSD: ip.h,v 1.9 1995/05/15 01:22:44 cgd Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1993
@@ -28,16 +29,11 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)ip.h	8.2 (Berkeley) 6/1/94
+ *	@(#)ip.h	8.1 (Berkeley) 6/10/93
  */
 
 #ifndef _NETINET_IP_H_
 #define _NETINET_IP_H_
-
-#include <sys/types.h>
-
-#include <netinet/in.h>
-#include <netinet/in_systm.h>	/* for n_time */
 
 /*
  * Definitions for internet protocol version 4.
@@ -49,20 +45,19 @@
  * Structure of an internet header, naked of options.
  */
 struct ip {
-#if BYTE_ORDER == LITTLE_ENDIAN
-	unsigned int ip_hl:4,		/* header length */
-		     ip_v:4;		/* version */
+#if _BYTE_ORDER == _LITTLE_ENDIAN
+	u_int     ip_hl:4,		/* header length */
+		  ip_v:4;		/* version */
 #endif
-#if BYTE_ORDER == BIG_ENDIAN
-	unsigned int ip_v:4,		/* version */
-		     ip_hl:4;		/* header length */
+#if _BYTE_ORDER == _BIG_ENDIAN
+	u_int     ip_v:4,		/* version */
+		  ip_hl:4;		/* header length */
 #endif
 	u_int8_t  ip_tos;		/* type of service */
 	u_int16_t ip_len;		/* total length */
 	u_int16_t ip_id;		/* identification */
 	u_int16_t ip_off;		/* fragment offset field */
 #define	IP_RF 0x8000			/* reserved fragment flag */
-#define	IP_EF 0x8000			/* evil flag, per RFC 3514 */
 #define	IP_DF 0x4000			/* dont fragment flag */
 #define	IP_MF 0x2000			/* more fragments flag */
 #define	IP_OFFMASK 0x1fff		/* mask for fragmenting bits */
@@ -73,16 +68,39 @@ struct ip {
 };
 
 #define	IP_MAXPACKET	65535		/* maximum packet size */
-#define	IP_MINFRAGSIZE	69		/* minimum size that can be fraged */
 
 /*
  * Definitions for IP type of service (ip_tos)
  */
+#define	IPTOS_LOWDELAY		0x10
+#define	IPTOS_THROUGHPUT	0x08
+#define	IPTOS_RELIABILITY	0x04
+/*	IPTOS_LOWCOST		0x02 XXX */
+#if 1
+/* ECN RFC3168 obsoletes RFC2481, and these will be deprecated soon. */
+#define	IPTOS_CE		0x01	/* congestion experienced */
+#define	IPTOS_ECT		0x02	/* ECN-capable transport */
+#endif
 
 /*
- * Definitions for DiffServ Codepoints as per RFC2474
+ * Definitions for IP precedence (also in ip_tos) (hopefully unused)
+ */
+#define	IPTOS_PREC_NETCONTROL		0xe0
+#define	IPTOS_PREC_INTERNETCONTROL	0xc0
+#define	IPTOS_PREC_CRITIC_ECP		0xa0
+#define	IPTOS_PREC_FLASHOVERRIDE	0x80
+#define	IPTOS_PREC_FLASH		0x60
+#define	IPTOS_PREC_IMMEDIATE		0x40
+#define	IPTOS_PREC_PRIORITY		0x20
+#define	IPTOS_PREC_ROUTINE		0x00
+
+/*
+ * Definitions for DiffServ Codepoints as per RFCs 2474, 3246, 4594 & 8622.
+ * These are the 6 most significant bits as they appear on the wire, so the
+ * two least significant bits must be zero.
  */
 #define	IPTOS_DSCP_CS0		0x00
+#define	IPTOS_DSCP_LE		0x04
 #define	IPTOS_DSCP_CS1		0x20
 #define	IPTOS_DSCP_AF11		0x28
 #define	IPTOS_DSCP_AF12		0x30
@@ -105,23 +123,6 @@ struct ip {
 #define	IPTOS_DSCP_CS7		0xe0
 
 /*
- * Definitions for DiffServ Class Selector Codepoints
- */
-#define	IPTOS_CLASS_CS0		0x00
-#define	IPTOS_CLASS_CS1		0x20
-#define	IPTOS_CLASS_CS2		0x40
-#define	IPTOS_CLASS_CS3		0x60
-#define	IPTOS_CLASS_CS4		0x80
-#define	IPTOS_CLASS_CS5		0xa0
-#define	IPTOS_CLASS_CS6		0xc0
-#define	IPTOS_CLASS_CS7		0xe0
-#define	IPTOS_CLASS_DEFAULT	IPTOS_CLASS_CS0
-#define	IPTOS_CLASS_MASK	0xe0
-#define	IPTOS_CLASS(cs)		((cs) & IPTOS_CLASS_MASK)
-#define	IPTOS_DSCP_MASK		0xfc
-#define	IPTOS_DSCP(cp)		((cp) & IPTOS_DSCP_MASK)
-
-/*
  * ECN (Explicit Congestion Notification) codepoints in RFC3168
  * mapped to the lower 2 bits of the TOS field.
  */
@@ -130,32 +131,6 @@ struct ip {
 #define	IPTOS_ECN_ECT0		0x02	/* ECN-capable transport (0) */
 #define	IPTOS_ECN_CE		0x03	/* congestion experienced */
 #define	IPTOS_ECN_MASK		0x03	/* ECN field mask */
-#define	IPTOS_ECN(cn)		((cn) & IPTOS_ECN_MASK)
-#define	IPTOS_ECN_NOT_ECT	0x00
-
-/*
- * Definitions for IP type of service per RFC1349 (ip_tos)
- * DEPRECATED
- */
-#define	IPTOS_LOWDELAY		0x10
-#define	IPTOS_THROUGHPUT	0x08
-#define	IPTOS_RELIABILITY	0x04
-#define	IPTOS_MINCOST		0x02
-/* ECN RFC3168 obsoletes RFC2481, and these will be deprecated soon. */
-#define	IPTOS_CE		0x01	/* congestion experienced */
-#define	IPTOS_ECT		0x02	/* ECN-capable transport */
-
-/*
- * Definitions for IP precedence per RFC1195 (also in ip_tos) (hopefully unused)
- */
-#define	IPTOS_PREC_NETCONTROL		0xe0
-#define	IPTOS_PREC_INTERNETCONTROL	0xc0
-#define	IPTOS_PREC_CRITIC_ECP		0xa0
-#define	IPTOS_PREC_FLASHOVERRIDE	0x80
-#define	IPTOS_PREC_FLASH		0x60
-#define	IPTOS_PREC_IMMEDIATE		0x40
-#define	IPTOS_PREC_PRIORITY		0x20
-#define	IPTOS_PREC_ROUTINE		0x00
 
 /*
  * Definitions for options.
@@ -178,6 +153,7 @@ struct ip {
 #define	IPOPT_LSRR		131		/* loose source route */
 #define	IPOPT_SATID		136		/* satnet id */
 #define	IPOPT_SSRR		137		/* strict source route */
+#define	IPOPT_RA		148		/* router alert */
 
 /*
  * Offsets to fields in options other than EOL and NOP.
@@ -194,19 +170,19 @@ struct	ip_timestamp {
 	u_int8_t ipt_code;		/* IPOPT_TS */
 	u_int8_t ipt_len;		/* size of structure (variable) */
 	u_int8_t ipt_ptr;		/* index of current entry */
-#if BYTE_ORDER == LITTLE_ENDIAN
-	unsigned int ipt_flg:4,		/* flags, see below */
-		     ipt_oflw:4;	/* overflow counter */
+#if _BYTE_ORDER == _LITTLE_ENDIAN
+	u_int    ipt_flg:4,		/* flags, see below */
+		 ipt_oflw:4;		/* overflow counter */
 #endif
-#if BYTE_ORDER == BIG_ENDIAN
-	unsigned int ipt_oflw:4,	/* overflow counter */
-		     ipt_flg:4;		/* flags, see below */
+#if _BYTE_ORDER == _BIG_ENDIAN
+	u_int    ipt_oflw:4,		/* overflow counter */
+		 ipt_flg:4;		/* flags, see below */
 #endif
 	union ipt_timestamp {
-		 n_time	ipt_time[1];
+		 u_int32_t ipt_time[1];
 		 struct	ipt_ta {
 			struct in_addr ipt_addr;
-			n_time ipt_time;
+			u_int32_t ipt_time;
 		 } ipt_ta[1];
 	} ipt_timestamp;
 };
@@ -235,23 +211,23 @@ struct	ip_timestamp {
 
 #define	IP_MSS		576		/* default maximum segment size */
 
+#ifdef _KERNEL
+
+/* Maximum length for IP protocol queues */
+#define IPQ_MAXLEN	2048
+
 /*
  * This is the real IPv4 pseudo header, used for computing the TCP and UDP
  * checksums. For the Internet checksum, struct ipovly can be used instead.
  * For stronger checksums, the real thing must be used.
  */
 struct ippseudo {
-	struct	in_addr	ippseudo_src;	/* source internet address */
-	struct	in_addr	ippseudo_dst;	/* destination internet address */
-	u_int8_t	ippseudo_pad;	/* pad, must be zero */
-	u_int8_t	ippseudo_p;	/* protocol */
-	u_int16_t	ippseudo_len;	/* protocol length */
+	struct    in_addr ippseudo_src;	/* source internet address */
+	struct    in_addr ippseudo_dst;	/* destination internet address */
+	u_int8_t  ippseudo_pad;		/* pad, must be zero */
+	u_int8_t  ippseudo_p;		/* protocol */
+	u_int16_t ippseudo_len;		/* protocol length */
 };
+#endif /* _KERNEL */
 
-#ifdef __CTASSERT
-__CTASSERT(sizeof(struct ip) == 20);
-__CTASSERT(sizeof(struct ip_timestamp) == 12);
-__CTASSERT(sizeof(struct ippseudo) == 12);
-#endif
-
-#endif	/* !_NETINET_IP_H_ */
+#endif /* _NETINET_IP_H_ */

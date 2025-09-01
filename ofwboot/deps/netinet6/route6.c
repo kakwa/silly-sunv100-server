@@ -1,4 +1,4 @@
-/*	$NetBSD: route6.c,v 1.25 2018/02/01 16:23:28 maxv Exp $	*/
+/*	$OpenBSD: route6.c,v 1.26 2025/07/08 00:47:41 jsg Exp $	*/
 /*	$KAME: route6.c,v 1.22 2000/12/03 00:54:00 itojun Exp $	*/
 
 /*
@@ -30,53 +30,57 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: route6.c,v 1.25 2018/02/01 16:23:28 maxv Exp $");
-
 #include <sys/param.h>
 #include <sys/mbuf.h>
 #include <sys/systm.h>
 
 #include <net/if.h>
+#include <net/if_var.h>
 
 #include <netinet/in.h>
-#include <netinet6/in6_var.h>
 #include <netinet/ip6.h>
 #include <netinet6/ip6_var.h>
-#include <netinet6/ip6_private.h>
 
 #include <netinet/icmp6.h>
 
+/*
+ * proto is unused
+ */
+
 int
-route6_input(struct mbuf **mp, int *offp, int proto)
+route6_input(struct mbuf **mp, int *offp, int proto, int af,
+    struct netstack *ns)
 {
-	struct mbuf *m = *mp;
+	struct ip6_hdr *ip6;
 	struct ip6_rthdr *rh;
 	int off = *offp, rhlen;
 
-	IP6_EXTHDR_GET(rh, struct ip6_rthdr *, m, off, sizeof(*rh));
+	ip6 = mtod(*mp, struct ip6_hdr *);
+	rh = ip6_exthdr_get(mp, off, sizeof(*rh));
 	if (rh == NULL) {
-		IP6_STATINC(IP6_STAT_TOOSHORT);
+		ip6stat_inc(ip6s_tooshort);
 		return IPPROTO_DONE;
 	}
 
 	switch (rh->ip6r_type) {
 	case IPV6_RTHDR_TYPE_0:
 		/*
-		 * RFC5095: RH0 must be treated as unrecognized.
+		 * RFC 5095 specifies to handle routing header type 0
+		 * the same way as an unrecognised routing type.
 		 */
+		/* FALLTHROUGH */
 	default:
 		/* unknown routing type */
 		if (rh->ip6r_segleft == 0) {
 			rhlen = (rh->ip6r_len + 1) << 3;
 			break;	/* Final dst. Just ignore the header. */
 		}
-		IP6_STATINC(IP6_STAT_BADOPTIONS);
-		icmp6_error(m, ICMP6_PARAM_PROB, ICMP6_PARAMPROB_HEADER,
-		    off + offsetof(struct ip6_rthdr, ip6r_type));
-		return IPPROTO_DONE;
+		ip6stat_inc(ip6s_badoptions);
+		icmp6_error(*mp, ICMP6_PARAM_PROB, ICMP6_PARAMPROB_HEADER,
+			    (caddr_t)&rh->ip6r_type - (caddr_t)ip6);
+		return (IPPROTO_DONE);
 	}
 
 	*offp += rhlen;
-	return rh->ip6r_nxt;
+	return (rh->ip6r_nxt);
 }

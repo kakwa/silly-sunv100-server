@@ -1,4 +1,5 @@
-/*	$NetBSD: ioctl.h,v 1.39 2019/03/25 19:24:31 maxv Exp $	*/
+/*	$OpenBSD: ioctl.h,v 1.17 2016/02/28 15:46:19 naddy Exp $	*/
+/*	$NetBSD: ioctl.h,v 1.20 1996/01/30 18:21:47 thorpej Exp $	*/
 
 /*-
  * Copyright (c) 1982, 1986, 1990, 1993, 1994
@@ -40,48 +41,8 @@
 #define	_SYS_IOCTL_H_
 
 #include <sys/ttycom.h>
-
-/*
- * Pun for SunOS prior to 3.2.  SunOS 3.2 and later support TIOCGWINSZ
- * and TIOCSWINSZ (yes, even 3.2-3.5, the fact that it wasn't documented
- * nonwithstanding).
- */
-struct ttysize {
-	unsigned short	ts_lines;
-	unsigned short	ts_cols;
-	unsigned short	ts_xxx;
-	unsigned short	ts_yyy;
-};
-#define	TIOCGSIZE	TIOCGWINSZ
-#define	TIOCSSIZE	TIOCSWINSZ
-
-#include <sys/ioccom.h>
-
-#include <sys/dkio.h>
 #include <sys/filio.h>
 #include <sys/sockio.h>
-
-/*
- * Passthrough ioctl commands. These are passed through to devices
- * as they are, it is expected that the device (a module, for example),
- * will know how to deal with them. One for each emulation, so that
- * no namespace clashes will occur between them, for devices that
- * may be dealing with specific ioctls for multiple emulations.
- */
-
-struct ioctl_pt {
-	unsigned long com;
-	void *data;
-};
-
-#define PTIOCNETBSD	_IOW('Z', 0, struct ioctl_pt)
-#define PTIOCSUNOS	_IOW('Z', 1, struct ioctl_pt)
-#define PTIOCSVR4	_IOW('Z', 2, struct ioctl_pt)
-#define PTIOCLINUX	_IOW('Z', 3, struct ioctl_pt)
-#define PTIOCFREEBSD	_IOW('Z', 4, struct ioctl_pt)
-#define PTIOCOSF1	_IOW('Z', 5, struct ioctl_pt)
-#define PTIOCULTRIX	_IOW('Z', 6, struct ioctl_pt)
-#define PTIOCWIN32	_IOW('Z', 7, struct ioctl_pt)
 
 #ifndef _KERNEL
 
@@ -92,23 +53,3 @@ int	ioctl(int, unsigned long, ...);
 __END_DECLS
 #endif /* !_KERNEL */
 #endif /* !_SYS_IOCTL_H_ */
-
-/*
- * Keep outside _SYS_IOCTL_H_
- * Compatibility with old terminal driver
- *
- * Source level -> #define USE_OLD_TTY
- * Kernel level -> options COMPAT_43 or COMPAT_SUNOS or ...
- */
-
-#if defined(_KERNEL_OPT)
-#include "opt_compat_freebsd.h"
-#include "opt_compat_sunos.h"
-#include "opt_compat_43.h"
-#include "opt_modular.h"
-#endif
-
-#if defined(USE_OLD_TTY) || defined(COMPAT_43) || defined(COMPAT_SUNOS) || \
-    defined(COMPAT_FREEBSD) || defined(MODULAR)
-#include <sys/ioctl_compat.h>
-#endif

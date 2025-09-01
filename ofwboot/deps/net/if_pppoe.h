@@ -1,6 +1,7 @@
-/* $NetBSD: if_pppoe.h,v 1.15 2017/10/12 09:50:55 knakahara Exp $ */
+/*	$OpenBSD: if_pppoe.h,v 1.11 2025/07/06 23:34:50 jsg Exp $ */
+/*	$NetBSD: if_pppoe.h,v 1.5 2003/11/28 08:56:48 keihan Exp $ */
 
-/*-
+/*
  * Copyright (c) 2002 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
@@ -32,15 +33,12 @@
 #ifndef _NET_IF_PPPOE_H_
 #define _NET_IF_PPPOE_H_
 
-#include <sys/ioccom.h>
-
+#define PPPOE_NAMELEN	512		/* should be enough */
 struct pppoediscparms {
 	char	ifname[IFNAMSIZ];	/* pppoe interface name */
 	char	eth_ifname[IFNAMSIZ];	/* external ethernet interface name */
-	const char *ac_name;		/* access concentrator name (or NULL) */
-	size_t	ac_name_len;		/* on write: length of buffer for ac_name */
-	const char *service_name;	/* service name (or NULL) */
-	size_t	service_name_len;	/* on write: length of buffer for service name */
+	char	ac_name[PPPOE_NAMELEN];	/* access concentrator name */
+	char	service_name[PPPOE_NAMELEN]; /* service name */
 };
 
 #define	PPPOESETPARMS	_IOW('i', 110, struct pppoediscparms)
@@ -60,25 +58,18 @@ struct pppoeconnectionstate {
 	u_int	session_id;		/* if state == PPPOE_STATE_SESSION */
 	u_int	padi_retry_no;		/* number of retries already sent */
 	u_int	padr_retry_no;
+
+	struct timeval session_time;	/* time the session was established */
 };
 
 #define PPPOEGETSESSION	_IOWR('i', 112, struct pppoeconnectionstate)
 
 #ifdef _KERNEL
 
-void pppoe_input(struct ifnet *, struct mbuf *);
-void pppoedisc_input(struct ifnet *, struct mbuf *);
-#endif /* _KERNEL */
-/*
- * Locking notes:
- * + pppoe_softc_list is protected by pppoe_softc_list_lock (an rwlock)
- *     pppoe_softc_list is a list of all pppoe_softc, and it is used to
- *     find pppoe interface by session id or host unique tag.
- * + pppoe_softc is protected by pppoe_softc->sc_lock (an rwlock)
- *     pppoe_softc holds session id and parameters to establish the id
- *
- * Locking order:
- *    - pppoe_softc_list_lock => pppoe_softc->sc_lock
- */
-#endif /* !_NET_IF_PPPOE_H_ */
+extern struct mbuf_queue pppoediscinq;
+extern struct mbuf_queue pppoeinq;
 
+struct mbuf	*pppoe_vinput(struct ifnet *, struct mbuf *, struct netstack *);
+
+#endif /* _KERNEL */
+#endif /* _NET_IF_PPPOE_H_ */

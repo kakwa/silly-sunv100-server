@@ -1,4 +1,5 @@
-/*	$NetBSD: nullfs.c,v 1.12 2014/03/20 03:13:18 christos Exp $	*/
+/*	$OpenBSD: nullfs.c,v 1.7 2003/08/11 06:23:09 deraadt Exp $	*/
+/*	$NetBSD: open.c,v 1.9 1995/09/19 09:16:52 thorpej Exp $	*/
 
 /*-
  * Copyright (c) 1993
@@ -65,60 +66,47 @@
 /*
  * Null filesystem
  */
-
-__compactcall int
-null_open(const char *path, struct open_file *f)
+int
+null_open(char *path, struct open_file *f)
 {
-
 	return EIO;
 }
 
-#ifndef LIBSA_NO_FS_CLOSE
-__compactcall int
+int
 null_close(struct open_file *f)
 {
-
 	return 0;
 }
-#endif
 
-__compactcall int
+ssize_t
 null_read(struct open_file *f, void *buf, size_t size, size_t *resid)
 {
-
 	return EIO;
 }
 
-#ifndef LIBSA_NO_FS_WRITE
-__compactcall int
+ssize_t
 null_write(struct open_file *f, void *buf, size_t size, size_t *resid)
 {
-
 	return EIO;
 }
-#endif
 
-#ifndef LIBSA_NO_FS_SEEK
-__compactcall off_t
+off_t
 null_seek(struct open_file *f, off_t offset, int where)
 {
-
-	return (off_t)-1;
+	errno = EIO;
+	return -1;
 }
-#endif
 
-__compactcall int
+int
 null_stat(struct open_file *f, struct stat *sb)
 {
-
 	return EIO;
 }
 
-#if defined(LIBSA_ENABLE_LS_OP)
-#include "ls.h"
-__compactcall void
-null_ls(struct open_file *f, const char *pattern)
+#ifndef NO_READDIR
+int
+null_readdir(struct open_file *f, char *name)
 {
-	lsunsup("nullfs");
+	return EIO;
 }
 #endif

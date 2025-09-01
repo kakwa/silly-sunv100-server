@@ -1,34 +1,5 @@
-/*	$NetBSD: stand.h,v 1.87 2022/04/30 09:24:05 rin Exp $	*/
-
-/*
- * Copyright (c) 1999 Christopher G. Demetriou.  All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *      This product includes software developed by Christopher G. Demetriou
- *	for the NetBSD Project.
- * 4. The name of the author may not be used to endorse or promote products
- *    derived from this software without specific prior written permission
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
- * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
- * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
- * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+/*	$OpenBSD: stand.h,v 1.72 2021/12/01 17:25:35 kettenis Exp $	*/
+/*	$NetBSD: stand.h,v 1.18 1996/11/30 04:35:51 gwr Exp $	*/
 
 /*-
  * Copyright (c) 1993
@@ -61,112 +32,46 @@
  *	@(#)stand.h	8.1 (Berkeley) 6/11/93
  */
 
-#ifndef _LIBSA_STAND_H_
-#define	_LIBSA_STAND_H_
-
-#include <sys/param.h>
 #include <sys/types.h>
-#include <sys/cdefs.h>
 #include <sys/stat.h>
 #include <sys/stdarg.h>
-#include "saioctl.h"
+#include <sys/stdint.h>
 #include "saerrno.h"
 
-#ifdef LIBSA_RENAME_PRINTF
-#define getchar		libsa_getchar
-#define kgets		libsa_kgets
-#define printf		libsa_printf
-#define putchar		libsa_putchar
-#define vprintf		libsa_vprintf
+#ifndef NULL
+#define	NULL	0
 #endif
 
 struct open_file;
 
-#define FS_DEF_BASE(fs) \
-	extern __compactcall int	__CONCAT(fs,_open)(const char *, struct open_file *); \
-	extern __compactcall int	__CONCAT(fs,_close)(struct open_file *); \
-	extern __compactcall int	__CONCAT(fs,_read)(struct open_file *, void *, \
-						size_t, size_t *); \
-	extern __compactcall int	__CONCAT(fs,_write)(struct open_file *, void *, \
-						size_t, size_t *); \
-	extern __compactcall off_t	__CONCAT(fs,_seek)(struct open_file *, off_t, int); \
-	extern __compactcall int	__CONCAT(fs,_stat)(struct open_file *, struct stat *)
-
-#if defined(LIBSA_ENABLE_LS_OP)
-#define FS_DEF(fs) \
-	FS_DEF_BASE(fs);\
-	extern __compactcall void	__CONCAT(fs,_ls)(struct open_file *, const char *)
-#else
-#define FS_DEF(fs) FS_DEF_BASE(fs)
+/*
+ * Useful macros
+ */
+/* don't define if libkern included */
+#ifndef LIBKERN_INLINE
+#define	max(a,b)	(((a)>(b))? (a) : (b))
+#define	min(a,b)	(((a)>(b))? (b) : (a))
 #endif
-
 
 /*
  * This structure is used to define file system operations in a file system
  * independent way.
  */
-extern const char *fsmod;
-
-#if !defined(LIBSA_SINGLE_FILESYSTEM)
 struct fs_ops {
-	__compactcall int	(*open)(const char *, struct open_file *);
-	__compactcall int	(*close)(struct open_file *);
-	__compactcall int	(*read)(struct open_file *, void *, size_t, size_t *);
-	__compactcall int	(*write)(struct open_file *, void *, size_t size, size_t *);
-	__compactcall off_t	(*seek)(struct open_file *, off_t, int);
-	__compactcall int	(*stat)(struct open_file *, struct stat *);
-#if defined(LIBSA_ENABLE_LS_OP)
-	__compactcall void	(*ls)(struct open_file *, const char *);
-#endif
+	int	(*open)(char *path, struct open_file *f);
+	int	(*close)(struct open_file *f);
+	int	(*read)(struct open_file *f, void *buf,
+		    size_t size, size_t *resid);
+	int	(*write)(struct open_file *f, void *buf,
+		    size_t size, size_t *resid);
+	off_t	(*seek)(struct open_file *f, off_t offset, int where);
+	int	(*stat)(struct open_file *f, struct stat *sb);
+	int	(*readdir)(struct open_file *f, char *);
+	int	(*fchmod)(struct open_file *f, mode_t);
 };
 
 extern struct fs_ops file_system[];
 extern int nfsys;
-
-#if defined(LIBSA_ENABLE_LS_OP)
-#define FS_OPS(fs) { \
-	__CONCAT(fs,_open), \
-	__CONCAT(fs,_close), \
-	__CONCAT(fs,_read), \
-	__CONCAT(fs,_write), \
-	__CONCAT(fs,_seek), \
-	__CONCAT(fs,_stat), \
-	__CONCAT(fs,_ls) }
-#else
-#define FS_OPS(fs) { \
-	__CONCAT(fs,_open), \
-	__CONCAT(fs,_close), \
-	__CONCAT(fs,_read), \
-	__CONCAT(fs,_write), \
-	__CONCAT(fs,_seek), \
-	__CONCAT(fs,_stat) }
-#endif
-
-#define	FS_OPEN(fs)		((fs)->open)
-#define	FS_CLOSE(fs)		((fs)->close)
-#define	FS_READ(fs)		((fs)->read)
-#define	FS_WRITE(fs)		((fs)->write)
-#define	FS_SEEK(fs)		((fs)->seek)
-#define	FS_STAT(fs)		((fs)->stat)
-#if defined(LIBSA_ENABLE_LS_OP)
-#define	FS_LS(fs)		((fs)->ls)
-#endif
-
-#else
-
-#define	FS_OPEN(fs)		___CONCAT(LIBSA_SINGLE_FILESYSTEM,_open)
-#define	FS_CLOSE(fs)		___CONCAT(LIBSA_SINGLE_FILESYSTEM,_close)
-#define	FS_READ(fs)		___CONCAT(LIBSA_SINGLE_FILESYSTEM,_read)
-#define	FS_WRITE(fs)		___CONCAT(LIBSA_SINGLE_FILESYSTEM,_write)
-#define	FS_SEEK(fs)		___CONCAT(LIBSA_SINGLE_FILESYSTEM,_seek)
-#define	FS_STAT(fs)		___CONCAT(LIBSA_SINGLE_FILESYSTEM,_stat)
-#if defined(LIBSA_ENABLE_LS_OP)
-#define	FS_LS(fs)		___CONCAT(LIBSA_SINGLE_FILESYSTEM,_ls)
-#endif
-
-FS_DEF(LIBSA_SINGLE_FILESYSTEM);
-
-#endif
 
 /* where values for lseek(2) */
 #define	SEEK_SET	0	/* set file offset to offset */
@@ -174,131 +79,128 @@ FS_DEF(LIBSA_SINGLE_FILESYSTEM);
 #define	SEEK_END	2	/* set file offset to EOF plus offset */
 
 /* Device switch */
-#if !defined(LIBSA_SINGLE_DEVICE)
-
 struct devsw {
 	char	*dv_name;
-	int	(*dv_strategy)(void *, int, daddr_t, size_t, void *, size_t *);
-	int	(*dv_open)(struct open_file *, ...);
-	int	(*dv_close)(struct open_file *);
-	int	(*dv_ioctl)(struct open_file *, u_long, void *);
+	int	(*dv_strategy)(void *devdata, int rw,
+				    daddr_t blk, size_t size,
+				    void *buf, size_t *rsize);
+	int	(*dv_open)(struct open_file *f, ...);
+	int	(*dv_close)(struct open_file *f);
+	int	(*dv_ioctl)(struct open_file *f, u_long cmd, void *data);
 };
 
 extern struct devsw devsw[];	/* device array */
 extern int ndevs;		/* number of elements in devsw[] */
 
-#define	DEV_NAME(d)		((d)->dv_name)
-#define	DEV_STRATEGY(d)		((d)->dv_strategy)
-#define	DEV_OPEN(d)		((d)->dv_open)
-#define	DEV_CLOSE(d)		((d)->dv_close)
-#define	DEV_IOCTL(d)		((d)->dv_ioctl)
-
-#else
-
-#define	DEV_NAME(d)		___STRING(LIBSA_SINGLE_DEVICE)
-#define	DEV_STRATEGY(d)		___CONCAT(LIBSA_SINGLE_DEVICE,strategy)
-#define	DEV_OPEN(d)		___CONCAT(LIBSA_SINGLE_DEVICE,open)
-#define	DEV_CLOSE(d)		___CONCAT(LIBSA_SINGLE_DEVICE,close)
-#define	DEV_IOCTL(d)		___CONCAT(LIBSA_SINGLE_DEVICE,ioctl)
-
-/* These may be #defines which must not be expanded here, hence the extra () */
-int	(DEV_STRATEGY(unused))(void *, int, daddr_t, size_t, void *, size_t *);
-int	(DEV_OPEN(unused))(struct open_file *, ...);
-int	(DEV_CLOSE(unused))(struct open_file *);
-int	(DEV_IOCTL(unused))(struct open_file *, u_long, void *);
-
-#endif
+extern struct consdev *cn_tab;
 
 struct open_file {
 	int		f_flags;	/* see F_* below */
-#if !defined(LIBSA_SINGLE_DEVICE)
-	const struct devsw	*f_dev;	/* pointer to device operations */
-#endif
+	struct devsw	*f_dev;		/* pointer to device operations */
 	void		*f_devdata;	/* device specific data */
-#if !defined(LIBSA_SINGLE_FILESYSTEM)
-	const struct fs_ops	*f_ops;	/* pointer to file system operations */
-#endif
+	struct fs_ops	*f_ops;		/* pointer to file system operations */
 	void		*f_fsdata;	/* file system specific data */
-#if !defined(LIBSA_NO_RAW_ACCESS)
 	off_t		f_offset;	/* current file offset (F_RAW) */
-#endif
 };
 
 #define	SOPEN_MAX	4
 extern struct open_file files[];
 
 /* f_flags values */
-#define	F_READ		0x0001	/* file opened for reading */
-#define	F_WRITE		0x0002	/* file opened for writing */
-#if !defined(LIBSA_NO_RAW_ACCESS)
-#define	F_RAW		0x0004	/* raw device open - no file system */
-#endif
-#define F_NODEV		0x0008	/* network open - no device */
+#define F_READ          0x0001 /* file opened for reading */
+#define F_WRITE         0x0002 /* file opened for writing */
+#define F_RAW           0x0004 /* raw device open - no file system */
+#define F_NODEV         0x0008 /* network open - no device */
+#define F_NOWRITE       0x0010 /* bootblock writing broken or unsupported */
 
-int	(devopen)(struct open_file *, const char *, char **);
-#ifdef HEAP_VARIABLE
-void	setheap(void *, void *);
-#endif
-void	*alloc(size_t) __compactcall;
-void	dealloc(void *, size_t) __compactcall;
+#define isupper(c)	((c) >= 'A' && (c) <= 'Z')
+#define islower(c)	((c) >= 'a' && (c) <= 'z')
+#define isalpha(c)	(isupper(c)||islower(c))
+#define tolower(c)	(isupper(c)?((c) - 'A' + 'a'):(c))
+#define toupper(c)	(islower(c)?((c) - 'a' + 'A'):(c))
+#define isspace(c)	((c) == ' ' || (c) == '\t')
+#define isdigit(c)	((c) >= '0' && (c) <= '9')
+
+#define	btochs(b,c,h,s,nh,ns)			\
+	c = (b) / ((nh) * (ns));		\
+	h = ((b) % ((nh) * (ns))) / (ns);	\
+	s = ((b) % ((nh) * (ns))) % (ns);
+
+void	*alloc(u_int);
+void	free(void *, u_int);
 struct	disklabel;
 char	*getdisklabel(const char *, struct disklabel *);
+u_int	dkcksum(const struct disklabel *);
 
-void	printf(const char *, ...)
-    __attribute__((__format__(__printf__, 1, 2)));
-int	snprintf(char *, size_t, const char *, ...)
-    __attribute__((__format__(__printf__, 3, 4)));
-void	vprintf(const char *, va_list)
-    __attribute__((__format__(__printf__, 1, 0)));
-int	vsnprintf(char *, size_t, const char *, va_list)
-    __attribute__((__format__(__printf__, 3, 0)));
+#define BOOTRANDOM	"/etc/random.seed"
+#define BOOTRANDOM_MAX	256	/* no point being greater than RC4STATE */
+extern char rnddata[BOOTRANDOM_MAX];
+
+void	printf(const char *, ...);
+int	snprintf(char *, size_t, const char *, ...);
+void	vprintf(const char *, __va_list);
 void	twiddle(void);
-void	kgets(char *, size_t);
-int	getfile(char *prompt, int mode);
-char	*strerror(int);
-__dead void	exit(int);
-__dead void	panic(const char *, ...)
-    __attribute__((__format__(__printf__, 1, 2)));
-__dead void	_rtt(void);
+void	getln(char *, size_t);
+__dead void	panic(const char *, ...) __attribute__((noreturn));
+__dead void	_rtt(void) __attribute__((noreturn));
+#define	bzero(s,n)	((void)memset((s),0,(n)))
+#define bcmp(s1,s2,n)	(memcmp((s2),(s1),(n)))
+#define	bcopy(s1,s2,n)	((void)memmove((s2),(s1),(n)))
+void	explicit_bzero(void *, size_t);
+void	hexdump(const void *, size_t);
 void	*memcpy(void *, const void *, size_t);
 void	*memmove(void *, const void *, size_t);
 int	memcmp(const void *, const void *, size_t);
+char	*strncpy(char *, const char *, size_t);
+int	strncmp(const char *, const char *, size_t);
+int	strcmp(const char *, const char *);
+size_t	strlen(const char *);
+long	strtol(const char *, char **, int);
+long long	strtoll(const char *, char **, int);
+char	*strchr(const char *, int);
 void	*memset(void *, int, size_t);
-void	exec(char *, char *, int);
+void	exit(void);
+#define O_RDONLY        0x0000          /* open for reading only */
+#define O_WRONLY        0x0001          /* open for writing only */
+#define O_RDWR          0x0002          /* open for reading and writing */
 int	open(const char *, int);
 int	close(int);
 void	closeall(void);
 ssize_t	read(int, void *, size_t);
-ssize_t	write(int, const void *, size_t);
+ssize_t	write(int, void *, size_t);
+int	stat(const char *path, struct stat *sb);
+int	fstat(int fd, struct stat *sb);
 off_t	lseek(int, off_t, int);
-int	ioctl(int, u_long, char *);
-int	stat(const char *, struct stat *);
-int	fstat(int, struct stat *);
-#if defined(LIBSA_ENABLE_LS_OP)
-void	ls(const char *);
-#endif
-
-typedef int cmp_t(const void *, const void *);
-void	qsort(void *, size_t, size_t, cmp_t *);
-
-extern int opterr, optind, optopt, optreset;
-extern char *optarg;
-int	getopt(int, char * const *, const char *);
-
-char	*getpass(const char *);
-int	checkpasswd(void);
-int	check_password(const char *);
-
+int	opendir(const char *);
+int	readdir(int, char *);
+void	closedir(int);
 int	nodev(void);
 int	noioctl(struct open_file *, u_long, void *);
 void	nullsys(void);
 
-FS_DEF(null);
+int	null_open(char *path, struct open_file *f);
+int	null_close(struct open_file *f);
+ssize_t	null_read(struct open_file *f, void *buf, size_t size, size_t *resid);
+ssize_t	null_write(struct open_file *f, void *buf, size_t size, size_t *resid);
+off_t	null_seek(struct open_file *f, off_t offset, int where);
+int	null_stat(struct open_file *f, struct stat *sb);
+int	null_readdir(struct open_file *f, char *name);
+char	*ttyname(int); /* match userland decl, but ignore !0 */
+dev_t	ttydev(char *);
+void	cninit(void);
+int	cnset(dev_t);
+void	cnputc(int);
+int	cngetc(void);
+int	cnischar(void);
+int	cnspeed(dev_t, int);
+u_int	sleep(u_int);
+void	usleep(u_int);
+char	*ctime(const time_t *);
 
-/* Machine dependent functions */
-void	machdep_start(char *, int, char *, char *, char *);
-int	getchar(void);
+int	ioctl(int, u_long, char *);
+
 void	putchar(int);
+int	getchar(void);
 
 #ifdef __INTERNAL_LIBSA_CREAD
 int	oopen(const char *, int);
@@ -307,36 +209,7 @@ ssize_t	oread(int, void *, size_t);
 off_t	olseek(int, off_t, int);
 #endif
 
-extern const char hexdigits[];
-
-int	fnmatch(const char *, const char *);
-
-/* XXX: These should be removed eventually. */
-void	bcopy(const void *, void *, size_t);
-void	bzero(void *, size_t);
-
-int	atoi(const char *);
-
-#if !defined(SA_HARDCODED_SECSIZE)
-#define	GETSECSIZE(f)	getsecsize(f)
-static inline u_int
-getsecsize(struct open_file *f)
-{
-	int rc;
-	u_int secsize = 0;
-
-	rc = DEV_IOCTL(f->f_dev)(f, SAIOSECSIZE, &secsize);
-	if (rc != 0 || secsize == 0)
-		secsize = DEV_BSIZE;
-
-	return secsize;
-}
-#else
-/*
- * For some archs, divdi3 and friends are required to support variable
- * sector sizes. Shave them off by making secsize compile-time constant.
- */
-#define	GETSECSIZE(f)	DEV_BSIZE
-#endif
-
-#endif /* _LIBSA_STAND_H_ */
+/* Machine dependent functions */
+int	devopen(struct open_file *, const char *, char **);
+void	machdep_start(char *, int, char *, char *, char *);
+time_t	getsecs(void);

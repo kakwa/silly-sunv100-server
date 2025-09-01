@@ -1,4 +1,4 @@
-/*	$NetBSD: ip6protosw.h,v 1.27 2019/03/19 13:38:53 msaitoh Exp $	*/
+/*	$OpenBSD: ip6protosw.h,v 1.16 2022/02/22 01:02:57 guenther Exp $	*/
 /*	$KAME: ip6protosw.h,v 1.22 2001/02/08 18:02:08 itojun Exp $	*/
 
 /*
@@ -30,8 +30,6 @@
  * SUCH DAMAGE.
  *
  */
-
-/*	BSDI protosw.h,v 2.3 1996/10/11 16:02:40 pjd Exp	*/
 
 /*-
  * Copyright (c) 1982, 1986, 1993
@@ -110,49 +108,5 @@ struct ip6ctlparam {
 	void *ip6c_cmdarg;		/* control command dependent data */
 	u_int8_t ip6c_nxt;		/* final next header field */
 };
-
-struct ip6protosw {
-	int 	pr_type;		/* socket type used for */
-	struct	domain *pr_domain;	/* domain protocol a member of */
-	short	pr_protocol;		/* protocol number */
-	short	pr_flags;		/* see below */
-
-/* protocol-protocol hooks */
-	int	(*pr_input)		/* input to protocol (from below) */
-			(struct mbuf **, int *, int);
-	void	*(*pr_ctlinput)		/* control input (from below) */
-			(int, const struct sockaddr *, void *);
-	int	(*pr_ctloutput)		/* control output (from above) */
-			(int, struct socket *, struct sockopt *);
-
-/* user-protocol hook */
-	const struct pr_usrreqs *pr_usrreqs;
-
-/* utility hooks */
-	void	(*pr_init)		/* initialization hook */
-			(void);
-
-	void	(*pr_fasttimo)		/* fast timeout (200ms) */
-			(void);
-	void	(*pr_slowtimo)		/* slow timeout (500ms) */
-			(void);
-	void	(*pr_drain)		/* flush any excess space possible */
-			(void);
-};
-
-#ifdef _KERNEL
-#define	PR_WRAP_INPUT6(name)				\
-static int						\
-name##_wrapper(struct mbuf **mp, int *offp, int proto)	\
-{							\
-	int rv;						\
-	mutex_enter(softnet_lock);			\
-	rv = name(mp, offp, proto);			\
-	mutex_exit(softnet_lock);			\
-	return rv;					\
-}
-#endif
-
-extern const struct ip6protosw inet6sw[];
 
 #endif /* !_NETINET6_IP6PROTOSW_H_ */

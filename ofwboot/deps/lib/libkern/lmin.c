@@ -1,4 +1,5 @@
-/*	$NetBSD: lmin.c,v 1.6 2009/03/14 21:04:24 dsl Exp $	*/
+/*	$OpenBSD: lmin.c,v 1.4 2004/08/07 00:38:32 deraadt Exp $	*/
+/*	$NetBSD: lmin.c,v 1.3 1996/03/14 18:52:10 christos Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1991 Regents of the University of California.

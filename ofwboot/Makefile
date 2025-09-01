@@ -1,6 +1,5 @@
-#	$NetBSD: Makefile,v 1.42 2023/06/03 21:26:28 lukem Exp $
-
-.include <bsd.init.mk>
+#	$OpenBSD: Makefile,v 1.29 2025/01/30 21:46:25 kurt Exp $
+#	$NetBSD: Makefile,v 1.2 2001/03/04 14:50:05 mrg Exp $
 
 CURDIR=	${.CURDIR}
 S=	${CURDIR}/deps
@@ -9,132 +8,116 @@ S=	${CURDIR}/deps
 # Override normal settings
 #
 
-WARNS?=		2
-KLINK_MACHINE=	sparc64
+WARNS=		0
 
 PROG?=		ofwboot
-SRCS=		srt0.s Locore.c boot.c ofdev.c alloc.c net.c netif_of.c
-SRCS+=		bootinfo.c loadfile_machdep.c promlib.c prf.c isfloppy.c
-.if ${MACHINE_ARCH} == "sparc64"
-SRCS+=		hvcall.S
-CPPFLAGS+=	-DSUN4V
+NOMAN=		ja, man!
+
+.if ${PROG} == "ofwboot"
+SOFTRAID?=	no
+.else
+SOFTRAID?=	no
 .endif
-.PATH:		${S}/arch/sparc64/sparc64 ${S}/arch/sparc/stand/common
 
-# XXX SHOULD NOT NEED TO DEFINE THESE!
-LIBCRT0=
-LIBCRTI=
-LIBC=
-LIBCRTBEGIN=
-LIBCRTEND=
+.PATH:		${S}/arch/sparc64/sparc64
+.PATH:		${S}/lib/libsa
+SRCS=		srt0.s Locore.c alloc.c boot.c elf64_exec.c arc4.c \
+		net.c netif_of.c ofdev.c vers.c
+.if ${SOFTRAID:L} == "yes"
+SRCS+=		diskprobe.c softraid_sparc64.c
+.endif
 
-COPTS+=		-ffreestanding -mcpu=v9
+.PATH:		${S}/lib/libkern/arch/sparc64 ${S}/lib/libkern
+SRCS+=		strlcpy.c strcmp.c strlcat.c strlen.c ffs.S
+
+.if ${SOFTRAID:L} == "yes"
+SRCS+=		aes_xts.c bcrypt_pbkdf.c blowfish.c explicit_bzero.c \
+		hmac_sha1.c pkcs5_pbkdf2.c rijndael.c sha1.c sha2.c softraid.c
+.endif
+
 CWARNFLAGS+=	-Wno-main
-CFLAGS+=	${COPTS}
-CPPFLAGS+=	-D_STANDALONE
-CPPFLAGS+=	-DBOOT_ELF32 -DBOOT_ELF64 -DBOOT_AOUT
-CPPFLAGS+=	-DNETBOOT
-CPPFLAGS+=	-DSUPPORT_DHCP
-CPPFLAGS+=	-DNETIF_DEBUG 
-CPPFLAGS+=	-D_DEBUG
+AFLAGS+=	-x assembler-with-cpp -D_LOCORE -D__ELF__ -fno-pie 
+CFLAGS+=	${COPTS} -fno-pie -fno-stack-protector
+CPPFLAGS+=	-D_STANDALONE -DSUN4U -nostdinc
+CPPFLAGS+=  -DNETBOOT
+CPPFLAGS+=	-DNETIF_DEBUG
 
-# Follow the suit of Makefile.kern.inc; needed for the lfs64 union
-# accessors -- they don't actually dereference the resulting pointer,
-# just use it for type-checking.
-CWARNFLAGS+=	${CC_WNO_ADDRESS_OF_PACKED_MEMBER}
-
-LINKS+=		${BINDIR}/ofwboot ${BINDIR}/ofwboot.net
-
-NOMAN=		# defined
-STRIPFLAG=
 BINMODE=	444
 
 NEWVERSWHAT=	"OpenFirmware Boot"
 
 #
-# Elf64 defaults to 1MB
-#
-# We may get address conflicts with other bootloaders, say
-# Sun's ufsboot, so we'll pick a reasonably empty address.
+# ELF64 defaults to 1MB
 #
 RELOC=		100000
 
 ENTRY=		_start
 
-CPPFLAGS+=	-I${S}
-CPPFLAGS+=	-I${CURDIR}/../../.. -I${CURDIR}/../../../.. -I${CURDIR} -I.
-CPPFLAGS+=	-I${CURDIR}/../../../../../common/include
+CLEANFILES+=	sparc machine
+
+# Local libsa settings and build rule
+SADST?= ${.CURDIR}/deps/lib/libsa
+SALIB?= ${SADST}/libsa.a
+
+${SALIB}:
+	@echo Building local libsa
+	@rm -f ${SALIB}
+	@mkdir -p ${SADST}
+	@objs=""; \
+	for f in ${.CURDIR}/deps/lib/libsa/*.c ${.CURDIR}/deps/lib/libkern/divdi3.c ${.CURDIR}/deps/lib/libkern/qdivrem.c; do \
+		b=$${f##*/}; n=$${b%.c}; \
+		case "$${b}" in \
+			cd9660.c) \
+				continue ;; \
+			nfs.c|bootparam.c) \
+				continue ;; \
+			cons.c|putchar.c) \
+				continue ;; \
+			cread.c) \
+				continue ;; \
+			loadfile.c|loadfile_elf.c) \
+				continue ;; \
+			rpc.c) \
+				continue ;; \
+			softraid.c) \
+				continue ;; \
+			ufs.c|ufs2.c) \
+				continue ;; \
+		esac; \
+		${CC} ${CFLAGS} -ffreestanding -fno-builtin -nostdinc \
+			-I${.CURDIR} -I${.CURDIR}/deps -I${.CURDIR}/deps/include -I${.CURDIR}/deps/lib/libsa \
+			-D_STANDALONE -DCOMPAT_UFS -c $$f -o ${SADST}/$$n.o || exit 1; \
+		objs="$$objs ${SADST}/$$n.o"; \
+	done; \
+	${AR} rcs ${SALIB} $$objs; \
+	${RANLIB} ${SALIB}
+
+CPPFLAGS+=	-I${.CURDIR}/deps/include -I${CURDIR} -I.
 CPPFLAGS+=	-DRELOC=0x${RELOC}
-CPPFLAGS+=	-I${CURDIR}
+CPPFLAGS+=	-DRARP_DEBUG
 
 #
 # XXXXX FIXME
 #
-CPPFLAGS+=	-DSPARC_BOOT_AOUT
-CPPFLAGS+=	-DSPARC_BOOT_ELF
-CPPFLAGS+=	-DSPARC_BOOT_UFS
-CPPFLAGS+=	-DSPARC_BOOT_NFS
-CPPFLAGS+=	-DSPARC_BOOT_CD9660
+## no local UFS in minimal TFTP build
+#CPPFLAGS+=	-DSPARC_BOOT_UFS
+#CPPFLAGS+=	-DSPARC_BOOT_HSFS
+#.if ${SOFTRAID:L} == "yes"
+#CPPFLAGS+=	-DSOFTRAID
+#.endif
 
-### find out what to use for libkern (fallback to empty if not available)
-.if exists("${S}/lib/libkern/Makefile.inc")
-KERN_AS=	library
-.include "${S}/lib/libkern/Makefile.inc"
-LIBKERN=	${KERNLIB}
-.else
-LIBKERN=
+.if !make(clean) && !make(cleandir) && !make(includes) && !make(libdep) && \
+    !make(sadep) && !make(salibdir) && !make(obj)
+.BEGIN:
+	@([ -h machine ] || ln -s ${.CURDIR}/deps/include machine)
 .endif
 
-### find out what to use for libz (fallback to empty if not available)
-.if exists("${S}/lib/libz/Makefile.inc")
-Z_AS=		library
-.include "${S}/lib/libz/Makefile.inc"
-LIBZ=		${ZLIB}
-.else
-LIBZ=
-.endif
+${PROG}: ${OBJS} ${SALIB}
+	${LD} -N -Ttext ${RELOC} -e ${ENTRY} -o ${PROG} --no-pie -znorelro \
+	    ${OBJS} -L${SADST} ${SALIB}
 
-### find out what to use for libsa
-SA_AS=		library
-SAMISCMAKEFLAGS=	SA_USE_LOADFILE=yes SA_USE_CREAD=yes
-SAMISCCPPFLAGS+=	-DCOMPAT_SOLARIS_UFS
-.include "${S}/lib/libsa/Makefile.inc"
-LIBSA=		${SALIB}
-
-.if exists("${S}/conf/newvers_stand.mk")
-.include "${S}/conf/newvers_stand.mk"
-.endif
-
-.include <bsd.own.mk>
-.if exists("${CURDIR}/bsd.klinks.mk")
-.include "${CURDIR}/bsd.klinks.mk"
-.endif
-
-.if CROSS
-${PROG}: ${OBJS} ${LIBSA} ${LIBZ} ${LIBKERN}
-	${_MKTARGET_LINK}
-	${LD} -N -p -Ttext ${RELOC} -e ${ENTRY} >lderr -o ${PROG} \
-	    ${OBJS} -L${SADST} -lsa -L${ZDST} -lz -L${KERNDST} -lkern # solaris linker
-.else
-${PROG}: ${OBJS} ${LIBSA} ${LIBZ} ${LIBKERN}
-	${_MKTARGET_LINK}
-	${LD} -X -N -S -Ttext ${RELOC} -e ${ENTRY} -o ${PROG} \
-	    ${OBJS} ${LIBSA} ${LIBZ} ${LIBKERN}	# native linker
-.endif
-
-.include <bsd.prog.mk>
-
-CPUFLAGS+=		-mcpu=v9
-AFLAGS+=		-Wa,-Av9a
-AFLAGS+=		-x assembler-with-cpp -D_LOCORE -D__ELF__
-
-NORMAL_S=	${CC} ${AFLAGS} ${AFLAGS.${<:T}}  ${CPPFLAGS} -c $<
+NORMAL_S=	${CC} ${AFLAGS} ${CPPFLAGS} -c $<
 srt0.o: srt0.s
 	${NORMAL_S}
 
-hvcall.o: hvcall.S
-	${NORMAL_S}
-
-
-# Explicit dependency for this.
-boot.o: boot.c
+.include <bsd.prog.mk>

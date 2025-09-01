@@ -1,4 +1,5 @@
-/*	$NetBSD: lockf.h,v 1.20 2008/11/19 13:34:11 pooka Exp $	*/
+/*	$OpenBSD: lockf.h,v 1.17 2019/04/20 08:28:59 anton Exp $	*/
+/*	$NetBSD: lockf.h,v 1.5 1994/06/29 06:44:33 cgd Exp $	*/
 
 /*
  * Copyright (c) 1991, 1993
@@ -31,20 +32,14 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)lockf.h	8.2 (Berkeley) 10/26/94
+ *	@(#)lockf.h	8.1 (Berkeley) 6/11/93
  */
 
-#ifndef _SYS_LOCKF_H_
-#define _SYS_LOCKF_H_
-
 #ifdef _KERNEL
+struct lockf_state;
 
-#include <sys/vnode.h>
-
-struct lockf;
-
-int lf_advlock(struct vop_advlock_args *, struct lockf **, off_t);
-void lf_init(void);
+void	 lf_init(void);
+int	 lf_advlock(struct lockf_state **,
+	    off_t, caddr_t, int, struct flock *, int);
+void	 lf_purgelocks(struct lockf_state **);
 #endif /* _KERNEL */
-
-#endif /* !_SYS_LOCKF_H_ */

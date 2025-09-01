@@ -1,4 +1,5 @@
-/*	$NetBSD: ucred.h,v 1.36 2011/10/12 23:03:36 dholland Exp $	*/
+/*	$OpenBSD: ucred.h,v 1.14 2022/03/17 14:23:34 visa Exp $	*/
+/*	$NetBSD: ucred.h,v 1.12 1995/06/01 22:44:50 jtc Exp $	*/
 
 /*
  * Copyright (c) 1989, 1993
@@ -28,29 +29,57 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)ucred.h	8.4 (Berkeley) 1/9/95
+ *	@(#)ucred.h	8.2 (Berkeley) 1/4/94
  */
 
 #ifndef _SYS_UCRED_H_
 #define	_SYS_UCRED_H_
 
-#ifdef _KERNEL
+#include <sys/refcnt.h>
 #include <sys/syslimits.h>
-#else
-#include <limits.h>
-#endif
 
 /*
  * Credentials.
  */
+struct ucred {
+	struct refcnt	cr_refcnt;	/* reference count */
 
-/* Userland's view of credentials. This should not change */
-struct uucred {
-	unsigned short	cr_unused;		/* not used, compat */
-	uid_t		cr_uid;			/* effective user id */
-	gid_t		cr_gid;			/* effective group id */
-	short		cr_ngroups;		/* number of groups */
-	gid_t		cr_groups[NGROUPS_MAX];	/* groups */
+/* The following fields are all copied by crset() */
+#define	cr_startcopy	cr_uid
+	uid_t	cr_uid;			/* effective user id */
+	uid_t	cr_ruid;		/* Real user id. */
+	uid_t	cr_svuid;		/* Saved effective user id. */
+	gid_t	cr_gid;			/* effective group id */
+	gid_t	cr_rgid;		/* Real group id. */
+	gid_t	cr_svgid;		/* Saved effective group id. */
+	short	cr_ngroups;		/* number of groups */
+	gid_t	cr_groups[NGROUPS_MAX];	/* groups */
 };
+#define NOCRED ((struct ucred *)-1)	/* no credential available */
+#define FSCRED ((struct ucred *)-2)	/* filesystem credential */
+
+/*
+ *  Userspace version, for use in syscalls arguments
+ */
+struct xucred {
+	uid_t	cr_uid;			/* user id */
+	gid_t	cr_gid;			/* group id */
+	short	cr_ngroups;		/* number of groups */
+	gid_t	cr_groups[NGROUPS_MAX];	/* groups */
+};
+
+#ifdef _KERNEL
+
+int		crfromxucred(struct ucred *, const struct xucred *);
+void		crset(struct ucred *, const struct ucred *);
+struct ucred	*crcopy(struct ucred *cr);
+struct ucred	*crdup(struct ucred *cr);
+void		crfree(struct ucred *cr);
+struct ucred	*crget(void);
+struct ucred	*crhold(struct ucred *);
+int		suser(struct proc *p);
+int		suser_ucred(struct ucred *cred);
+
+#endif /* _KERNEL */
 
 #endif /* !_SYS_UCRED_H_ */

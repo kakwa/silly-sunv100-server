@@ -1,4 +1,5 @@
-/*	$NetBSD: kernel.h,v 1.35 2022/10/26 23:27:32 riastradh Exp $	*/
+/*	$OpenBSD: kernel.h,v 1.27 2024/08/14 13:54:08 mvs Exp $	*/
+/*	$NetBSD: kernel.h,v 1.11 1995/03/03 01:24:16 cgd Exp $	*/
 
 /*-
  * Copyright (c) 1990, 1993
@@ -36,40 +37,26 @@
  *	@(#)kernel.h	8.3 (Berkeley) 1/21/94
  */
 
-#ifndef _SYS_KERNEL_H_
-#define _SYS_KERNEL_H_
-
-#if defined(_KERNEL) || defined(_STANDALONE)
-#include <sys/param.h>
-
 /* Global variables for the kernel. */
 
-extern long hostid;
+/* 1.1 */
+extern int hostid;
 extern char hostname[MAXHOSTNAMELEN];
 extern int hostnamelen;
 extern char domainname[MAXHOSTNAMELEN];
 extern int domainnamelen;
 
-extern int rtc_offset;		/* offset of rtc from UTC in minutes */
+/* 1.2 */
+extern int utc_offset;		/* seconds east of UTC */
 
-extern int cold;		/* still working on startup */
-extern int start_init_exec;	/* init(8) may have started */
-extern int shutting_down;	/* system is shutting down */
 extern int tick;		/* usec per tick (1000000 / hz) */
-extern int tickadj;		/* "standard" clock skew, us./tick */
+extern int tick_nsec;		/* nsec per tick */
+extern int ticks;		/* # of hardclock ticks */
 extern int hz;			/* system clock's frequency */
 extern int stathz;		/* statistics clock's frequency */
 extern int profhz;		/* profiling clock's frequency */
+extern int lbolt;		/* once a second sleep address */
 
-extern int profsrc;		/* profiling source */
-extern int psratio;		/* ratio: prof / stat */
-
-/* Accessors. */
-
-int getticks(void);
-
-#define PROFSRC_CLOCK	0
-
+#ifndef HZ
+#define HZ 100
 #endif
-
-#endif /* _SYS_KERNEL_H_ */

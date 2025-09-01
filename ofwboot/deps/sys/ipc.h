@@ -1,4 +1,5 @@
-/*	$NetBSD: ipc.h,v 1.38 2024/05/12 10:34:56 rillig Exp $	*/
+/*	$OpenBSD: ipc.h,v 1.13 2014/11/15 21:42:50 guenther Exp $	*/
+/*	$NetBSD: ipc.h,v 1.15 1996/02/09 18:25:12 christos Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -38,55 +39,33 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)ipc.h	8.4 (Berkeley) 2/19/95
+ *	@(#)ipc.h	8.3 (Berkeley) 1/21/94
  */
 
 /*
  * SVID compatible ipc.h file
  */
-
 #ifndef _SYS_IPC_H_
 #define _SYS_IPC_H_
 
-#include <sys/featuretest.h>
 #include <sys/types.h>
 
 struct ipc_perm {
-	uid_t		uid;	/* user id */
-	gid_t		gid;	/* group id */
 	uid_t		cuid;	/* creator user id */
 	gid_t		cgid;	/* creator group id */
+	uid_t		uid;	/* user id */
+	gid_t		gid;	/* group id */
 	mode_t		mode;	/* r/w permission */
-
-	/*
-	 * These members are private and used only in the internal
-	 * implementation of this interface.
-	 */
-	unsigned short	_seq;	/* sequence # (to generate unique
-				   msg/sem/shm id) */
-	key_t		_key;	/* user specified msg/sem/shm key */
+	unsigned short	seq;	/* sequence # (to generate unique msg/sem/shm id) */
+	key_t		key;	/* user specified msg/sem/shm key */
 };
 
-#if defined(_NETBSD_SOURCE)
-/* Warning: 64-bit structure padding is needed here */
-struct ipc_perm_sysctl {
-	uint64_t	_key;
-	uid_t		uid;
-	gid_t		gid;
-	uid_t		cuid;
-	gid_t		cgid;
-	mode_t		mode;
-	int16_t		_seq;
-	int16_t		pad;
-};
-#endif /* _NETBSD_SOURCE */
-
-/* Common access type bits, used with ipcperm(). */
+/* common mode bits */
 #define	IPC_R		000400	/* read permission */
 #define	IPC_W		000200	/* write/alter permission */
 #define	IPC_M		010000	/* permission to change control info */
 
-/* X/Open required constants (same values as system 5) */
+/* SVID required constants (same values as system 5) */
 #define	IPC_CREAT	001000	/* create entry if key does not exist */
 #define	IPC_EXCL	002000	/* fail if key exists */
 #define	IPC_NOWAIT	004000	/* error if request must wait */
@@ -97,51 +76,18 @@ struct ipc_perm_sysctl {
 #define	IPC_SET		1	/* set options */
 #define	IPC_STAT	2	/* get options */
 
-/*
- * Macros to convert between ipc ids and array indices or sequence ids.
- * The first of these is used by ipcs(1), and so is defined outside the
- * kernel as well.
- */
-#if defined(_NETBSD_SOURCE)
-#define	IXSEQ_TO_IPCID(ix,perm)	(((perm._seq) << 16) | (ix & 0xffff))
-#endif
-
 #ifdef _KERNEL
-#include <sys/sysctl.h>
+/* Macros to convert between ipc ids and array indices or sequence ids */
 #define	IPCID_TO_IX(id)		((id) & 0xffff)
 #define	IPCID_TO_SEQ(id)	(((id) >> 16) & 0xffff)
+#define	IXSEQ_TO_IPCID(ix,perm)	(((perm.seq) << 16) | (ix & 0xffff))
 
-struct kauth_cred;
-__BEGIN_DECLS
-int	ipcperm(struct kauth_cred *, struct ipc_perm *, int);
+struct ucred;
 
-void	sysvipcinit(void);
-void	sysvipcfini(void);
-__END_DECLS
+int ipcperm(struct ucred *, struct ipc_perm *, int);
 
-/*
- * sysctl helper routine for kern.ipc.sysvipc_info subtree.
- */
+#else /* !_KERNEL */
 
-#define SYSCTL_FILL_PERM(src, dst) do { \
-	(dst)._key = (src)._key; \
-	(dst).uid = (src).uid; \
-	(dst).gid = (src).gid; \
-	(dst).cuid = (src).cuid; \
-	(dst).cgid = (src).cgid; \
-	(dst).mode = (src).mode; \
-	(dst)._seq = (src)._seq; \
-} while (0)
-
-/*
- * Set-up the sysctl routine for COMPAT_50
- */
-
-__BEGIN_DECLS
-void sysvipc50_set_compat_sysctl(int (*)(SYSCTLFN_PROTO));
-__END_DECLS
-
-#else /* _KERNEL */
 __BEGIN_DECLS
 key_t	ftok(const char *, int);
 __END_DECLS

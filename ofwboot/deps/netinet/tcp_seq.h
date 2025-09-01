@@ -1,7 +1,8 @@
-/*	$NetBSD: tcp_seq.h,v 1.17 2014/07/25 17:53:59 ryo Exp $	*/
+/*	$OpenBSD: tcp_seq.h,v 1.6 2007/06/15 18:23:06 markus Exp $	*/
+/*	$NetBSD: tcp_seq.h,v 1.6 1995/03/26 20:32:35 jtc Exp $	*/
 
 /*
- * Copyright (c) 1982, 1986, 1993, 1995
+ * Copyright (c) 1982, 1986, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,7 +29,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)tcp_seq.h	8.3 (Berkeley) 6/21/95
+ *	@(#)tcp_seq.h	8.1 (Berkeley) 6/10/93
  */
 
 #ifndef _NETINET_TCP_SEQ_H_
@@ -43,10 +44,6 @@
 #define	SEQ_LEQ(a,b)	((int)((a)-(b)) <= 0)
 #define	SEQ_GT(a,b)	((int)((a)-(b)) > 0)
 #define	SEQ_GEQ(a,b)	((int)((a)-(b)) >= 0)
-#define SEQ_MIN(a, b)	((SEQ_LT(a, b)) ? (a) : (b))
-#define SEQ_MAX(a, b)	((SEQ_GT(a, b)) ? (a) : (b))
-
-#define	SEQ_SUB(a,b)	((long)((a)-(b)))
 
 /*
  * Macros to initialize tcp sequence numbers for
@@ -58,13 +55,12 @@
 
 #define	tcp_sendseqinit(tp) \
 	(tp)->snd_una = (tp)->snd_nxt = (tp)->snd_max = (tp)->snd_up = \
-	    (tp)->snd_recover = (tp)->snd_high = (tp)->snd_fack = (tp)->iss
+	    (tp)->iss
 
-#define TCP_ISS_RANDOM_MASK 0x00ffffff /* bits of randomness in a TCP ISS */
-#define TCP_ISSINCR         0x01000000 /* increment per time and per conn */
+#define	TCP_ISSINCR	(125*1024)	/* increment for tcp_iss each second */
+#define	TCP_ISSINCR2	(1*1024*1024)	/* increment for tcp_iss each second */
 
 #ifdef _KERNEL
-extern tcp_seq	 tcp_iss_seq;		/* tcp initial seq # */
-#endif
-
-#endif /* !_NETINET_TCP_SEQ_H_ */
+extern tcp_seq	tcp_iss;		/* tcp initial send seq # */
+#endif /* _KERNEL */
+#endif /* _NETINET_TCP_SEQ_H_ */

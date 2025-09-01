@@ -1,4 +1,5 @@
-/*	$NetBSD: resourcevar.h,v 1.59 2024/05/12 10:34:56 rillig Exp $	*/
+/*	$OpenBSD: resourcevar.h,v 1.35 2024/10/24 23:24:58 jsg Exp $	*/
+/*	$NetBSD: resourcevar.h,v 1.12 1995/11/22 23:01:53 cgd Exp $	*/
 
 /*
  * Copyright (c) 1991, 1993
@@ -28,106 +29,86 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)resourcevar.h	8.4 (Berkeley) 1/9/95
+ *	@(#)resourcevar.h	8.3 (Berkeley) 2/22/94
  */
 
 #ifndef	_SYS_RESOURCEVAR_H_
 #define	_SYS_RESOURCEVAR_H_
 
-#if !defined(_KERNEL) && !defined(_KMEMUSER)
-#error "not supposed to be exposed to userland"
-#endif
-
-#include <sys/mutex.h>
-#include <sys/resource.h>
-
-struct bintime;
+#include <sys/refcnt.h>
 
 /*
- * Kernel per-process accounting / statistics
+ * Kernel shareable process resource limits.  Because this structure
+ * is moderately large but changes infrequently, it is shared
+ * copy-on-write after forks.
  */
-struct uprof {				/* profile arguments */
-	char *	pr_base;		/* buffer base */
-	size_t  pr_size;		/* buffer size */
-	u_long	pr_off;			/* pc offset */
-	u_int   pr_scale;		/* pc scaling */
-	u_long	pr_addr;		/* temp storage for addr until AST */
-	u_long	pr_ticks;		/* temp storage for ticks until AST */
+struct plimit {
+	struct	rlimit pl_rlimit[RLIM_NLIMITS];
+	struct	refcnt pl_refcnt;
 };
 
-struct pstats {
-#define	pstat_startzero	p_ru
-	struct	rusage p_ru;		/* stats for this proc */
-	struct	rusage p_cru;		/* sum of stats for reaped children */
-#define	pstat_endzero	pstat_startcopy
-
-#define	pstat_startcopy	p_timer
-	struct	itimerspec p_timer[3];	/* virtual-time timers */
-	struct	uprof p_prof;			/* profile arguments */
-#define	pstat_endcopy	p_start
-	struct	timeval p_start;	/* starting time */
-};
+/* add user profiling from AST */
+#define	ADDUPROF(p)							\
+do {									\
+	atomic_clearbits_int(&(p)->p_flag, P_OWEUPC);			\
+	addupc_task((p), (p)->p_prof_addr, (p)->p_prof_ticks);		\
+	(p)->p_prof_ticks = 0;						\
+} while (0)
 
 #ifdef _KERNEL
 
+#include <lib/libkern/libkern.h>	/* for KASSERT() */
+
+extern uint64_t profclock_period;
+
+void	 addupc_intr(struct proc *, u_long, u_long);
+void	 addupc_task(struct proc *, u_long, u_int);
+struct clockrequest;
+void	 profclock(struct clockrequest *, void *, void *);
+void	 tuagg_add_process(struct process *, struct proc *);
+void	 tuagg_add_runtime(void);
+struct tusage;
+void	 tuagg_get_proc(struct tusage *, struct proc *);
+void	 tuagg_get_process(struct tusage *, struct process *);
+void	 calctsru(struct tusage *, struct timespec *, struct timespec *,
+	    struct timespec *);
+void	 calcru(struct tusage *, struct timeval *, struct timeval *,
+	    struct timeval *);
+void	 lim_startup(struct plimit *);
+void	 lim_free(struct plimit *);
+void	 lim_fork(struct process *, struct process *);
+struct plimit *lim_read_enter(void);
+
 /*
- * Process resource limits.  Since this structure is moderately large,
- * but changes infrequently, it is shared copy-on-write after forks.
- *
- * When a separate copy is created, then 'pl_writeable' is set to true,
- * and 'pl_sv_limit' is pointed to the old proc_t::p_limit structure.
+ * Finish read access to resource limits.
  */
-struct plimit {
-	struct rlimit	pl_rlimit[RLIM_NLIMITS];
-	char *		pl_corename;
-	size_t		pl_cnlen;
-	u_int		pl_refcnt;
-	bool		pl_writeable;
-	kmutex_t	pl_lock;
-	struct plimit *	pl_sv_limit;
-};
+static inline void
+lim_read_leave(struct plimit *limit)
+{
+	/* nothing */
+}
 
-/* add user profiling from AST XXXSMP */
-#define	ADDUPROF(l)							\
-	do {								\
-		struct proc *_p = (l)->l_proc;				\
-		addupc_task((l),					\
-		    _p->p_stats->p_prof.pr_addr,			\
-		    _p->p_stats->p_prof.pr_ticks);			\
-		_p->p_stats->p_prof.pr_ticks = 0;			\
-	} while (0)
+/*
+ * Get the value of the resource limit in current process.
+ */
+static inline rlim_t
+lim_cur(int which)
+{
+	struct plimit *limit;
+	rlim_t val;
 
-extern char defcorename[];
+	KASSERT(which >= 0 && which < RLIM_NLIMITS);
 
-extern int security_setidcore_dump;
-extern char security_setidcore_path[];
-extern uid_t security_setidcore_owner;
-extern gid_t security_setidcore_group;
-extern mode_t security_setidcore_mode;
+	limit = lim_read_enter();
+	val = limit->pl_rlimit[which].rlim_cur;
+	lim_read_leave(limit);
+	return (val);
+}
 
-void	addupc_intr(struct lwp *, u_long);
-void	addupc_task(struct lwp *, u_long, u_int);
-void	calcru(struct proc *, struct timeval *, struct timeval *,
-	    struct timeval *, struct timeval *);
-void	addrulwp(struct lwp *, struct bintime *);
+rlim_t	 lim_cur_proc(struct proc *, int);
 
-struct plimit *lim_copy(struct plimit *);
-void	lim_addref(struct plimit *);
-void	lim_privatise(struct proc *);
-void	lim_setcorename(struct proc *, char *, size_t);
-void	lim_free(struct plimit *);
-
-void	resource_init(void);
-void	ruspace(struct proc *);
-void	ruadd(struct rusage *, struct rusage *);
-void	rulwps(proc_t *, struct rusage *);
-struct	pstats *pstatscopy(struct pstats *);
-void	pstatsfree(struct pstats *);
-extern rlim_t maxdmap;
-extern rlim_t maxsmap;
-
-int	getrusage1(struct proc *, int, struct rusage *);
+void	 ruadd(struct rusage *, const struct rusage *);
+void	 rucheck(void *);
 
 #endif
-
 #endif	/* !_SYS_RESOURCEVAR_H_ */

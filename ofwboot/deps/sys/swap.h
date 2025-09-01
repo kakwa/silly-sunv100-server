@@ -1,7 +1,8 @@
-/*	$NetBSD: swap.h,v 1.9 2024/02/09 22:08:38 andvar Exp $	*/
+/*	$OpenBSD: swap.h,v 1.7 2013/09/30 12:02:30 millert Exp $	*/
+/*	$NetBSD: swap.h,v 1.2 1998/09/13 14:46:24 christos Exp $	*/
 
 /*
- * Copyright (c) 1995, 1996, 1998, 2009 Matthew R. Green
+ * Copyright (c) 1995, 1996, 1998 Matthew R. Green, Tobias Weingartner
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -12,6 +13,8 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
+ * 3. The name of the author may not be used to endorse or promote products
+ *    derived from this software without specific prior written permission
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
  * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
@@ -30,27 +33,26 @@
 
 #include <sys/syslimits.h>
 
-/* This structure is used to return swap information for userland */
-
+/* These structures are used to return swap information for userland */
 struct swapent {
 	dev_t	se_dev;			/* device id */
 	int	se_flags;		/* flags */
 	int	se_nblks;		/* total blocks */
 	int	se_inuse;		/* blocks in use */
 	int	se_priority;		/* priority of this device */
-	char	se_path[PATH_MAX+1];	/* path name */
+	char	se_path[PATH_MAX];	/* path name */
 };
 
+#ifdef _KERNEL
+#define	NETDEV		(dev_t)(-2)	/* network device (for nfs swap) */
+#endif /* _KERNEL */
+
 #define SWAP_ON		1		/* begin swapping on device */
-#define SWAP_OFF	2		/* stop swapping on device */
+#define SWAP_OFF	2		/* (stop swapping on device) */
 #define SWAP_NSWAP	3		/* how many swap devices ? */
-#define SWAP_STATS13	4		/* old SWAP_STATS, no se_path */
+#define SWAP_STATS	4		/* get device info */
 #define SWAP_CTL	5		/* change priority on device */
-#define SWAP_STATS50	6		/* old SWAP_STATS, 32 bit dev_t */
-#define SWAP_DUMPDEV	7		/* use this device as dump device */
-#define SWAP_GETDUMPDEV	8		/* use this device as dump device */
-#define SWAP_DUMPOFF	9		/* stop using the dump device */
-#define SWAP_STATS	10		/* get device info */
+#define SWAP_DUMPDEV 	7		/* use this device as dump device */
 
 #define SWF_INUSE	0x00000001	/* in use: we have swapped here */
 #define SWF_ENABLE	0x00000002	/* enabled: we can swap here */
