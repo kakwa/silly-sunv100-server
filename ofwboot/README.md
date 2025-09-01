@@ -2,7 +2,7 @@
 
 `ofwboot` build with tftp bootstrap to directly get a kernel from tftp
 
-### Prerequisites
+## Prerequisites
 
 - bmake
 - SPARC64 cross toolchain: `gcc-sparc64-linux-gnu` and `binutils-sparc64-linux-gnu`
@@ -14,14 +14,7 @@ sudo apt-get update -y
 sudo apt-get install -y bmake gcc-sparc64-linux-gnu binutils-sparc64-linux-gnu
 ```
 
-Optional sanity checks:
-
-```bash
-bmake -V .MAKE.VERSION
-sparc64-linux-gnu-gcc -v
-```
-
-### Build
+## Build
 
 From this directory:
 
@@ -29,8 +22,14 @@ From this directory:
 CC=sparc64-linux-gnu-gcc LD=sparc64-linux-gnu-ld bmake
 ```
 
-To clean:
+## Clean
 
 ```bash
 bmake clean
+```
+
+## Test OFW version
+
+```bash
+CC=sparc64-linux-gnu-gcc LD=sparc64-linux-gnu-ld bmake -DKAKWAOFWTEST
 ```

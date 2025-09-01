@@ -439,6 +439,12 @@ main(void)
 
 	printf(">> kakwa's OFW BOOT %s\n", version);
 
+#ifdef KAKWAOFWTEST
+    printf("\nthis is just a test OFW program\n");
+    printf(">>> exiting <<<\n");
+    exit();
+#endif
+
 	/*
 	 * Get the boot arguments from Openfirmware
 	 */
@@ -447,14 +453,6 @@ main(void)
 	    OF_getprop(chosen, "bootargs", bootline, sizeof bootline) < 0) {
 		printf("Invalid Openfirmware environment\n");
 	}
-
-#ifdef KAKWAOFWTEST
-    printf("\n* bootdev: %s\n", bootdev);
-    printf("* bootline: %s\n", bootline);
-    printf("\nthis is just a test OFW program\n", bootline);
-    printf(">> exiting\n", bootline);
-    exit();
-#endif
 
 #ifdef SOFTRAID
 	diskprobe();
